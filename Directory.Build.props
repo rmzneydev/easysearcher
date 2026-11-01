@@ -1,0 +1,9 @@
+<Project>
+  <!-- Comun a todos los proyectos. La version tambien la usa el instalador (tools/build-installer.ps1). -->
+  <PropertyGroup>
+    <Version>0.1.0</Version>
+    <Product>EasySearcher</Product>
+    <Authors>Neyder R</Authors>
+    <Copyright>Copyright (c) 2026 Neyder R</Copyright>
+  </PropertyGroup>
+</Project>
