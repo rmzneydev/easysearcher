@@ -31,7 +31,7 @@ public sealed class VolumeIndex : IDisposable
     const long NoSize = -1;                      // carpetas
 
     readonly ReaderWriterLockSlim _lock = new();
-    readonly SafeFileHandle _volume;
+    readonly SafeFileHandle? _volume; // null en indices construidos con FromRecords
 
     List<uint> _parent = [];
     List<uint> _attributes = [];
@@ -66,7 +66,7 @@ public sealed class VolumeIndex : IDisposable
         }
     }
 
-    VolumeIndex(char drive, SafeFileHandle volume)
+    VolumeIndex(char drive, SafeFileHandle? volume)
     {
         Drive = drive;
         _volume = volume;
@@ -89,14 +89,36 @@ public sealed class VolumeIndex : IDisposable
         return index;
     }
 
+    /// <summary>
+    /// Indice construido a partir de registros en memoria, sin leer la MFT ni el journal (no requiere
+    /// administrador). Para pruebas.
+    /// </summary>
+    internal static VolumeIndex FromRecords(char drive, IEnumerable<JournalRecord> records)
+    {
+        var index = new VolumeIndex(char.ToUpperInvariant(drive), null);
+        index.Populate(onRecord =>
+        {
+            foreach (var r in records)
+                onRecord(r.Frn, r.Parent, r.Attributes, 0, r.Name);
+        }, journal: null);
+        return index;
+    }
+
     /// <summary>Enumera la MFT completa y reemplaza el contenido del indice.</summary>
     void Load()
     {
         var sw = Stopwatch.StartNew();
+        var volume = _volume ?? throw new InvalidOperationException("Indice sin volumen asociado.");
 
         // Se toma la posicion del journal antes de enumerar para no perder cambios ocurridos mientras tanto
-        var journal = MftReader.QueryJournal(_volume, Drive);
+        var journal = MftReader.QueryJournal(volume, Drive);
+        Populate(onRecord => MftReader.Enumerate(volume, Drive, onRecord), journal);
+        BuildTime = sw.Elapsed;
+    }
 
+    /// <summary>Reemplaza el contenido del indice con los registros que entrega <paramref name="enumerate"/>.</summary>
+    void Populate(Action<MftReader.RecordHandler> enumerate, JournalInfo? journal)
+    {
         var parent = new List<uint>(1 << 16);
         var attributes = new List<uint>(1 << 16);
         var names = new List<string>(1 << 16);
@@ -107,7 +129,7 @@ public sealed class VolumeIndex : IDisposable
         var pool = new HashSet<string>(StringComparer.Ordinal);
         var lookup = pool.GetAlternateLookup<ReadOnlySpan<char>>();
 
-        MftReader.Enumerate(_volume, Drive, (frn, p, a, _, name) =>
+        enumerate((frn, p, a, _, name) =>
         {
             if (frn == RootFrn || frn > int.MaxValue) return;
             int slot = (int)frn;
@@ -158,8 +180,6 @@ public sealed class VolumeIndex : IDisposable
         {
             _lock.ExitWriteLock();
         }
-
-        BuildTime = sw.Elapsed;
     }
 
     /// <summary>
@@ -169,16 +189,22 @@ public sealed class VolumeIndex : IDisposable
     /// </summary>
     public bool Update()
     {
-        if (_journal is not { } journal) return false;
+        if (_journal is not { } journal || _volume is not { } volume) return false;
 
         var records = new List<JournalRecord>();
         long nextUsn = _nextUsn;
-        if (!MftReader.ReadJournal(_volume, Drive, journal.Id, ref nextUsn, records))
+        if (!MftReader.ReadJournal(volume, Drive, journal.Id, ref nextUsn, records))
         {
             Load();
             return true;
         }
         _nextUsn = nextUsn;
+        return ApplyRecords(records);
+    }
+
+    /// <summary>Aplica registros del journal ya leidos. Devuelve true si cambio la estructura del indice.</summary>
+    internal bool ApplyRecords(IReadOnlyList<JournalRecord> records)
+    {
         if (records.Count == 0) return false;
 
         bool structural = false;
@@ -524,7 +550,7 @@ public sealed class VolumeIndex : IDisposable
         return cache;
     }
 
-    internal void Search(string text, EntryKind kind, SearchScope? scope, bool includeSystem, List<SearchResult> results,
+    internal void Search(SearchQuery query, EntryKind kind, SearchScope? scope, bool includeSystem, List<SearchResult> results,
         CancellationToken cancellationToken)
     {
         _lock.EnterReadLock();
@@ -558,7 +584,7 @@ public sealed class VolumeIndex : IDisposable
                 if (mask is not null && !mask[i]) continue;
                 if (filterKind && ((attributes[i] & (uint)FileAttributes.Directory) != 0) != wantDirectories) continue;
                 if (filterExtension && !extensions.Contains(FileCategories.GetExtension(names[i]))) continue;
-                if (text.Length > 0 && !names[i].Contains(text, StringComparison.OrdinalIgnoreCase)) continue;
+                if (!query.IsEmpty && !query.Matches(names[i])) continue;
                 results.Add(new SearchResult(this, i));
             }
         }
@@ -570,7 +596,7 @@ public sealed class VolumeIndex : IDisposable
 
     public void Dispose()
     {
-        _volume.Dispose();
+        _volume?.Dispose();
         _lock.Dispose();
     }
 }

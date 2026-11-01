@@ -13,16 +13,18 @@ public sealed class PipeSearchClient : ISearchService
     const int ConnectTimeoutMs = 1000;
 
     readonly ConcurrentBag<NamedPipeClientStream> _idle = [];
+    readonly string _pipeName;
 
-    PipeSearchClient()
-    {
-    }
+    PipeSearchClient(string pipeName) => _pipeName = pipeName;
 
     /// <summary>Se conecta al servicio y comprueba que responde.</summary>
     /// <exception cref="SearchServiceException">El servicio no esta en ejecucion.</exception>
-    public static PipeSearchClient Connect()
+    public static PipeSearchClient Connect() => Connect(PipeProtocol.PipeName);
+
+    /// <summary>Con otro nombre de pipe, para que las pruebas no choquen con el servicio instalado.</summary>
+    internal static PipeSearchClient Connect(string pipeName)
     {
-        var client = new PipeSearchClient();
+        var client = new PipeSearchClient(pipeName);
         try
         {
             client.GetStatus();
@@ -80,7 +82,7 @@ public sealed class PipeSearchClient : ISearchService
             idle.Dispose();
         }
 
-        var pipe = new NamedPipeClientStream(".", PipeProtocol.PipeName, PipeDirection.InOut);
+        var pipe = new NamedPipeClientStream(".", _pipeName, PipeDirection.InOut);
         try
         {
             pipe.Connect(ConnectTimeoutMs);

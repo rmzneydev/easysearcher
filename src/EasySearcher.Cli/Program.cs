@@ -83,6 +83,8 @@ for (int i = 0; i < args.Length; i++)
             Console.WriteLine("Uso: easysearch [-d C,D] [-r carpeta] [-k all|files|dirs|images|videos|audio|docs] [-s (incluir sistema)] [-n 50 (0 = todos)]");
             Console.WriteLine("                  [-o name|folder|size|date[-]] [-l (tamano y fecha)] [-w segundos (vigilar cambios)]");
             Console.WriteLine("                  [--from aaaa-mm-dd] [--to aaaa-mm-dd] [--service] [texto]");
+            Console.WriteLine();
+            Console.WriteLine("Texto: linkin mp3 (ambas palabras), \"linkin park\" (exacto), *.mp3 o foto_??.jpg (comodines), !temp (excluir)");
             return 0;
         default:
             text = args[i];

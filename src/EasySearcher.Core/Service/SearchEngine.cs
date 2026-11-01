@@ -56,6 +56,13 @@ public sealed class SearchEngine : ISearchService
         });
     }
 
+    /// <summary>Motor sobre un indice ya construido (sin leer la MFT). Para pruebas.</summary>
+    internal SearchEngine(FileIndex index)
+    {
+        _index = index;
+        Built = Task.CompletedTask;
+    }
+
     public EngineStatus GetStatus()
     {
         var index = _index;

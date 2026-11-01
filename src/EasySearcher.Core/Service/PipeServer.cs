@@ -8,13 +8,17 @@ namespace EasySearcher.Core.Service;
 /// <summary>Atiende las peticiones de la app por un named pipe, una tarea por conexion.</summary>
 public static class PipeServer
 {
-    public static async Task RunAsync(ISearchService service, CancellationToken cancellationToken)
+    public static Task RunAsync(ISearchService service, CancellationToken cancellationToken) =>
+        RunAsync(service, PipeProtocol.PipeName, cancellationToken);
+
+    /// <summary>Con otro nombre de pipe, para que las pruebas no choquen con el servicio instalado.</summary>
+    internal static async Task RunAsync(ISearchService service, string pipeName, CancellationToken cancellationToken)
     {
         var security = CreateSecurity();
         while (!cancellationToken.IsCancellationRequested)
         {
             var pipe = NamedPipeServerStreamAcl.Create(
-                PipeProtocol.PipeName, PipeDirection.InOut, NamedPipeServerStream.MaxAllowedServerInstances,
+                pipeName, PipeDirection.InOut, NamedPipeServerStream.MaxAllowedServerInstances,
                 PipeTransmissionMode.Byte, PipeOptions.Asynchronous, 0, 0, security);
             try
             {
@@ -32,10 +36,15 @@ public static class PipeServer
     /// <summary>
     /// Los usuarios del equipo pueden leer y escribir, pero no crear instancias del pipe:
     /// asi otro proceso no puede hacerse pasar por el servicio mientras este corre.
+    /// El usuario del propio proceso (SYSTEM en el servicio) necesita control total para crearlas.
     /// </summary>
     static PipeSecurity CreateSecurity()
     {
         var security = new PipeSecurity();
+        using (var identity = WindowsIdentity.GetCurrent())
+        {
+            security.AddAccessRule(new PipeAccessRule(identity.User!, PipeAccessRights.FullControl, AccessControlType.Allow));
+        }
         security.AddAccessRule(new PipeAccessRule(
             new SecurityIdentifier(WellKnownSidType.AuthenticatedUserSid, null), PipeAccessRights.ReadWrite, AccessControlType.Allow));
         security.AddAccessRule(new PipeAccessRule(

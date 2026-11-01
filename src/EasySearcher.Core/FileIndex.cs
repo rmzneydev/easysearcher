@@ -19,7 +19,7 @@ public sealed class FileIndex : IDisposable
     /// <summary>Se dispara (en un hilo de fondo) cuando <see cref="StartWatching"/> aplica cambios al indice.</summary>
     public event EventHandler? Changed;
 
-    FileIndex(IReadOnlyList<VolumeIndex> volumes, IReadOnlyDictionary<char, Exception> failures)
+    internal FileIndex(IReadOnlyList<VolumeIndex> volumes, IReadOnlyDictionary<char, Exception> failures)
     {
         Volumes = volumes;
         Failures = failures;
@@ -110,17 +110,21 @@ public sealed class FileIndex : IDisposable
         return volume.CreateScope(full[3..].TrimEnd('\\'));
     }
 
-    /// <summary>Busca por subcadena en el nombre, sin distinguir mayusculas. Texto vacio devuelve todo.</summary>
+    /// <summary>
+    /// Busca por nombre, sin distinguir mayusculas. El texto admite varias palabras, frases entre comillas,
+    /// comodines y exclusiones (ver <see cref="SearchQuery"/>). Texto vacio devuelve todo.
+    /// </summary>
     public List<SearchResult> Search(string text, SearchOptions? options = null, CancellationToken cancellationToken = default)
     {
         options ??= new SearchOptions();
         var scope = options.Scope;
+        var query = SearchQuery.Parse(text);
 
         var results = new List<SearchResult>();
         foreach (var volume in Volumes)
         {
             if (scope is null || scope.Volume == volume)
-                volume.Search(text, options.Kind, scope, options.IncludeSystem, results, cancellationToken);
+                volume.Search(query, options.Kind, scope, options.IncludeSystem, results, cancellationToken);
         }
 
         if (options.ModifiedFrom is not null || options.ModifiedTo is not null)
