@@ -97,3 +97,31 @@ public class DateFilterTests
         Assert.Equal((null, null), DateFilter.GetRange(DatePreset.Any, null, null, Now));
     }
 }
+
+public class SizeFilterTests
+{
+    const long KB = 1024, MB = 1024 * KB, GB = 1024 * MB;
+
+    [Fact]
+    public void Presets_cover_every_size_without_gaps()
+    {
+        // Las categorias del Explorador, consecutivas: el maximo de una es el minimo de la siguiente
+        long? previousMax = 0;
+        for (var preset = SizePreset.Empty; preset <= SizePreset.Gigantic; preset++)
+        {
+            var (min, max) = SizeFilter.GetRange(preset);
+            Assert.Equal(previousMax, min);
+            previousMax = max;
+        }
+        Assert.Null(previousMax);
+    }
+
+    [Fact]
+    public void Known_boundaries()
+    {
+        Assert.Equal((0L, 1L), SizeFilter.GetRange(SizePreset.Empty));
+        Assert.Equal((1 * GB, 4 * GB), SizeFilter.GetRange(SizePreset.Huge));
+        Assert.Equal((4 * GB, (long?)null), SizeFilter.GetRange(SizePreset.Gigantic));
+        Assert.Equal(((long?)null, (long?)null), SizeFilter.GetRange(SizePreset.Any));
+    }
+}

@@ -17,6 +17,8 @@ bool descending = false;
 bool details = false;
 bool memory = false;
 bool viaService = false;
+bool verifyMft = false;
+long? minSize = null, maxSize = null;
 DateTime? modifiedFrom = null, modifiedTo = null;
 
 for (int i = 0; i < args.Length; i++)
@@ -60,6 +62,15 @@ for (int i = 0; i < args.Length; i++)
         case "--from":
             modifiedFrom = DateTime.Parse(args[++i]).Date;
             break;
+        case "--min":
+            minSize = ParseSize(args[++i]);
+            break;
+        case "--max":
+            maxSize = ParseSize(args[++i]);
+            break;
+        case "--verify-mft":
+            verifyMft = true;
+            break;
         case "--to":
             // Inclusivo: hasta el final de ese dia
             modifiedTo = DateTime.Parse(args[++i]).Date.AddDays(1);
@@ -82,7 +93,8 @@ for (int i = 0; i < args.Length; i++)
         case "-h" or "--help":
             Console.WriteLine("Uso: easysearch [-d C,D] [-r carpeta] [-k all|files|dirs|images|videos|audio|docs] [-s (incluir sistema)] [-n 50 (0 = todos)]");
             Console.WriteLine("                  [-o name|folder|size|date[-]] [-l (tamano y fecha)] [-w segundos (vigilar cambios)]");
-            Console.WriteLine("                  [--from aaaa-mm-dd] [--to aaaa-mm-dd] [--service] [texto]");
+            Console.WriteLine("                  [--from aaaa-mm-dd] [--to aaaa-mm-dd] [--min 1G] [--max 500M] [--service] [texto]");
+            Console.WriteLine("                  [--verify-mft (compara tamano/fecha de la $MFT con los de Windows)]");
             Console.WriteLine();
             Console.WriteLine("Texto: linkin mp3 (ambas palabras), \"linkin park\" (exacto), *.mp3 o foto_??.jpg (comodines), !temp (excluir)");
             return 0;
@@ -120,6 +132,9 @@ if (memory)
                             $"promedio {chars / (double)names.Count:N1}");
 }
 
+if (verifyMft)
+    return VerifyMft();
+
 SearchScope? scope = null;
 if (root is not null)
 {
@@ -143,6 +158,8 @@ var options = new SearchOptions
     IncludeSystem = includeSystem,
     ModifiedFrom = modifiedFrom,
     ModifiedTo = modifiedTo,
+    MinSize = minSize,
+    MaxSize = maxSize,
 };
 sw.Restart();
 var results = index.Search(text, options);
@@ -170,7 +187,7 @@ if (watchSeconds > 0)
     {
         Thread.Sleep(500);
         sw.Restart();
-        if (!index.Update()) continue;
+        if ((index.Update() & IndexChange.Structure) == 0) continue;
         var updateMs = sw.Elapsed.TotalMilliseconds;
 
         var next = index.Search(text, options).Select(Format).ToHashSet();
@@ -183,6 +200,50 @@ if (watchSeconds > 0)
 
 index.Dispose();
 return index.Volumes.Count > 0 ? 0 : 1;
+
+// Compara, para una muestra de archivos, el tamano y la fecha que da Windows (GetFileAttributesEx) con los
+// leidos de la $MFT cruda
+int VerifyMft()
+{
+    const int SampleSize = 5000;
+    var files = index.Search("", new SearchOptions { Kind = EntryKind.Files });
+    var sample = files.OrderBy(_ => Random.Shared.Next()).Take(SampleSize).ToList();
+
+    // Primero lo que dice Windows (queda en cache), despues se pisa con lo leido de la $MFT
+    var timer = Stopwatch.StartNew();
+    var fromWindows = sample.Select(r => r.Details).ToList();
+    Console.Error.WriteLine($"Windows: {sample.Count:N0} archivos consultados en {timer.ElapsedMilliseconds:N0} ms");
+
+    timer.Restart();
+    int filled = index.LoadDetailsFromMft();
+    Console.Error.WriteLine($"$MFT: {filled:N0} entradas completadas en {timer.ElapsedMilliseconds:N0} ms");
+
+    var fromMft = sample.Select(r => r.Details).ToList();
+    int sizeMismatches = 0, dateMismatches = 0, shown = 0;
+    for (int i = 0; i < sample.Count; i++)
+    {
+        var (w, m) = (fromWindows[i], fromMft[i]);
+        bool sizeOk = w.Size == m.Size, dateOk = w.Modified == m.Modified;
+        if (!sizeOk) sizeMismatches++;
+        if (!dateOk) dateMismatches++;
+        if ((!sizeOk || !dateOk) && shown++ < 10)
+            Console.WriteLine($"  distinto: {sample[i].FullPath}\n    Windows {w.Size} {w.Modified:yyyy-MM-dd HH:mm:ss.fff} | $MFT {m.Size} {m.Modified:yyyy-MM-dd HH:mm:ss.fff}");
+    }
+    Console.Error.WriteLine($"Muestra de {sample.Count:N0}: tamano distinto en {sizeMismatches}, fecha distinta en {dateMismatches}");
+
+    timer.Restart();
+    var all = index.Search("");
+    ResultSorter.Sort(all, SortColumn.Size, descending: true);
+    Console.Error.WriteLine($"Ordenar {all.Count:N0} resultados por tamano (con la $MFT ya leida): {timer.ElapsedMilliseconds:N0} ms");
+    return 0;
+}
+
+static long ParseSize(string value)
+{
+    value = value.Trim().ToUpperInvariant();
+    long multiplier = value[^1] switch { 'K' => 1L << 10, 'M' => 1L << 20, 'G' => 1L << 30, 'T' => 1L << 40, _ => 1 };
+    return (long)(double.Parse(multiplier == 1 ? value : value[..^1], System.Globalization.CultureInfo.InvariantCulture) * multiplier);
+}
 
 // Consulta al servicio de Windows por el named pipe; no requiere administrador
 int QueryService()
@@ -208,7 +269,7 @@ int QueryService()
             return 1;
         }
         var response = client.Search(new SearchRequest(text, kind, root, includeSystem, sort, descending,
-            ModifiedFrom: modifiedFrom, ModifiedTo: modifiedTo));
+            ModifiedFrom: modifiedFrom, ModifiedTo: modifiedTo, MinSize: minSize, MaxSize: maxSize));
         var rows = client.GetRows(response.SearchId, 0, max > 0 ? max : response.Total);
         var detailsRows = details ? client.GetDetails(response.SearchId, 0, rows.Length) : [];
         double roundTrip = sw.Elapsed.TotalMilliseconds;

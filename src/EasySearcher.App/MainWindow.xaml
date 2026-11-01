@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:EasySearcher.App"
         xmlns:vwp="clr-namespace:WpfToolkit.Controls;assembly=VirtualizingWrapPanel"
-        Title="EasySearcher" Height="640" Width="1200" Icon="Assets/EasySearcher.ico"
+        Title="EasySearcher" Height="640" Width="1300" Icon="Assets/EasySearcher.ico"
         WindowStartupLocation="CenterScreen"
         FocusManager.FocusedElement="{Binding ElementName=QueryBox}">
     <Window.Resources>
@@ -88,9 +88,22 @@
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
+            <!-- Mismo orden que el enum SizePreset -->
+            <ComboBox x:Name="SizeBox" Grid.Column="3" Width="150" Margin="8,0,0,0" SelectedIndex="0"
+                      VerticalContentAlignment="Center" ToolTip="Tamaño" SelectionChanged="SizeBox_SelectionChanged">
+                <ComboBoxItem Content="Cualquier tamaño" />
+                <ComboBoxItem Content="Vacío (0 KB)" />
+                <ComboBoxItem Content="Diminuto (0 - 16 KB)" />
+                <ComboBoxItem Content="Pequeño (16 KB - 1 MB)" />
+                <ComboBoxItem Content="Mediano (1 - 128 MB)" />
+                <ComboBoxItem Content="Grande (128 MB - 1 GB)" />
+                <ComboBoxItem Content="Enorme (1 - 4 GB)" />
+                <ComboBoxItem Content="Gigantesco (&gt; 4 GB)" />
+            </ComboBox>
             <!-- Mismo orden que el enum ViewMode -->
-            <ComboBox x:Name="ViewBox" Grid.Column="3" Width="135" Margin="8,0,0,0" SelectedIndex="0"
+            <ComboBox x:Name="ViewBox" Grid.Column="4" Width="135" Margin="8,0,0,0" SelectedIndex="0"
                       VerticalContentAlignment="Center" ToolTip="Vista" SelectionChanged="ViewBox_SelectionChanged">
                 <ComboBoxItem Content="Detalles" />
                 <ComboBoxItem Content="Iconos medianos" />
@@ -111,7 +124,7 @@
                 <ComboBoxItem Content="El año pasado" />
                 <ComboBoxItem Content="Rango personalizado..." />
             </ComboBox>
-            <CheckBox x:Name="SystemBox" Grid.Column="4" Content="Sistema" Margin="10,0,0,0" VerticalAlignment="Center"
+            <CheckBox x:Name="SystemBox" Grid.Column="5" Content="Sistema" Margin="10,0,0,0" VerticalAlignment="Center"
                       ToolTip="Incluir archivos ocultos de sistema (System Volume Information, $Recycle.Bin, desktop.ini...)"
                       Click="SystemBox_Click" />
             <TextBox x:Name="QueryBox" FontSize="15" Padding="6,4" VerticalContentAlignment="Center"

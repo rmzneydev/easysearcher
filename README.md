@@ -11,8 +11,11 @@ actualiza en vivo con el USN Journal. Encuentra cualquier archivo o carpeta mien
 - Índice actualizado en vivo: lo que se crea, renombra, mueve o borra aparece en menos de un segundo.
 - Carpeta raíz para limitar la búsqueda, también desde el clic derecho del Explorador
   ("Buscar con EasySearcher").
-- Filtros por tipo (archivos, carpetas, imágenes, videos, música, documentos) y por fecha de
-  modificación (hoy, esta semana, rango personalizado…).
+- Filtros por tipo (archivos, carpetas, imágenes, videos, música, documentos), por fecha de
+  modificación (hoy, esta semana, rango personalizado…) y por tamaño (las categorías del Explorador,
+  hasta "Gigantesco, > 4 GB"). Con un filtro de fecha o tamaño se puede buscar sin escribir texto.
+- Tamaño y fecha de todas las entradas leídos directamente de la `$MFT` (~800.000 en ~4,5 s, en
+  segundo plano): ordenar o filtrar por ellos es instantáneo.
 - Vistas de detalles (nombre, carpeta, tamaño, fecha, con orden por columna) y de iconos con
   miniaturas, las mismas del Explorador.
 - Arrastrar y soltar resultados a otras aplicaciones, abrir, abrir la carpeta contenedora y copiar
@@ -66,9 +69,14 @@ ella misma.
 Detalles importantes del diseño:
 
 - Las entradas se guardan en listas paralelas indexadas por el número de registro de la MFT; los
-  nombres repetidos comparten un solo string. El índice completo ocupa unos 50 MB.
-- Tamaño y fecha no vienen en la MFT enumerada: se consultan al disco cuando hacen falta (filas
-  visibles, ordenar o filtrar por fecha) y quedan en caché.
+  nombres repetidos comparten un solo string. Los nombres ocupan unos 50 MB; con tamaño y fecha, ~65 MB.
+- La enumeración rápida de la MFT (`FSCTL_ENUM_USN_DATA`) no trae tamaño ni fecha. Con el índice ya
+  usable, `MftDetailsReader` lee la tabla `$MFT` cruda (siguiendo su runlist, con las correcciones de la
+  update sequence) y saca el tamaño de `$DATA` y la fecha de `$STANDARD_INFORMATION`. Lo que cambia
+  después (o lo que no se pudo leer) se consulta a Windows por archivo y queda en caché.
+- El journal distingue cambios de estructura (altas, bajas, renombres, movimientos) de cambios de
+  contenido (tamaño, fecha). La app repite la búsqueda en el primer caso y, en el segundo, solo
+  refresca las filas visibles (salvo que esté ordenando o filtrando por tamaño o fecha).
 - La app y el servicio comparan `Protocol.Version` (`Core/Service/Contracts.cs`). Si el servicio
   instalado es más viejo, la app deshabilita lo que este no entiende en lugar de mostrar resultados
   incorrectos. **Hay que subir esa versión cada vez que se agregan campos al protocolo.**
@@ -117,6 +125,8 @@ En esta máquina el SDK está en `D:\Programs\dotnet` y los paquetes NuGet en
 easysearch linkin                                  # lee la MFT directamente (requiere administrador)
 easysearch --service -r D:\Musica -k audio linkin  # consulta al servicio (sin administrador)
 easysearch --service -k images --from 2026-01-01 -o date- -l ""
+easysearch --service --min 4G -o size- -l ""       # archivos de mas de 4 GB
+easysearch --verify-mft                            # compara tamano/fecha de la $MFT con Windows (administrador)
 easysearch -h                                      # todas las opciones
 ```
 
@@ -144,13 +154,13 @@ desinstalar, quita todo.
 
 ## Limitaciones conocidas
 
-- Si un archivo se renombra y el nombre nuevo también coincide con la búsqueda, la fila puede mostrar
-  el nombre anterior hasta volver a buscar. Los tamaños tampoco se refrescan solos mientras se miran.
-- El orden alfabético no tiene en cuenta los acentos ("Árbol" va después de "Zeta").
-- La primera vez, ordenar o filtrar por tamaño o fecha una búsqueda de cientos de miles de resultados
-  tarda unos segundos.
-- Un generador de miniaturas de terceros que se cuelgue bloquea uno de los tres hilos de carga (no hay
-  tiempo límite).
+- Durante los primeros segundos tras arrancar el servicio (mientras se lee la `$MFT`), ordenar o filtrar
+  por tamaño o fecha una búsqueda enorme puede tardar, porque esos datos se piden archivo por archivo.
+- El orden ignora tildes ("Árbol" va junto a "Arbol"), pero no es un orden "natural" de números
+  ("archivo10" va antes que "archivo2").
+- Los archivos que el sistema tiene abiertos escribiendo (p. ej. logs de eventos) pueden mostrar en la
+  `$MFT` una fecha unos minutos más vieja que la que ve Windows en memoria.
+- Un generador de miniaturas que se cuelgue más de 10 s se abandona y se reemplaza su hilo (hasta 6 veces).
 - Cualquier usuario del equipo puede buscar nombres de archivos de todo el disco (solo los nombres).
 - En Windows 11 el clic derecho aparece en "Mostrar más opciones".
 

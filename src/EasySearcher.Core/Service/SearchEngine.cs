@@ -21,11 +21,19 @@ public sealed class SearchEngine : ISearchService
     string? _buildError;
     double _buildSeconds;
     long _changeCounter;
+    long _detailsCounter;
+    volatile bool _detailsReady;
     int _nextSearchId;
     bool _disposed;
 
     /// <summary>Termina cuando el indice esta listo (o fallo su construccion).</summary>
     public Task Built { get; }
+
+    /// <summary>
+    /// Termina cuando se leyeron de la $MFT el tamano y la fecha de todo (o fallo); devuelve cuantas
+    /// entradas se completaron.
+    /// </summary>
+    public Task<int> DetailsLoaded { get; }
 
     public SearchEngine(IEnumerable<char> drives)
     {
@@ -36,7 +44,11 @@ public sealed class SearchEngine : ISearchService
             {
                 var index = FileIndex.Build(letters);
                 _buildSeconds = _buildClock.Elapsed.TotalSeconds;
-                index.Changed += (_, _) => Interlocked.Increment(ref _changeCounter);
+                index.Changed += (_, change) =>
+                {
+                    if ((change & IndexChange.Structure) != 0) Interlocked.Increment(ref _changeCounter);
+                    if ((change & IndexChange.Details) != 0) Interlocked.Increment(ref _detailsCounter);
+                };
                 index.StartWatching(TimeSpan.FromSeconds(1));
                 lock (_gate)
                 {
@@ -54,6 +66,15 @@ public sealed class SearchEngine : ISearchService
                 _buildError = ex.Message;
             }
         });
+
+        // Con el indice ya usable, se completan en segundo plano tamanos y fechas desde la $MFT
+        DetailsLoaded = Built.ContinueWith(_ =>
+        {
+            int filled = _index?.LoadDetailsFromMft() ?? 0;
+            _detailsReady = true;
+            Interlocked.Increment(ref _detailsCounter);
+            return filled;
+        }, TaskScheduler.Default);
     }
 
     /// <summary>Motor sobre un indice ya construido (sin leer la MFT). Para pruebas.</summary>
@@ -61,6 +82,7 @@ public sealed class SearchEngine : ISearchService
     {
         _index = index;
         Built = Task.CompletedTask;
+        DetailsLoaded = Task.FromResult(0);
     }
 
     public EngineStatus GetStatus()
@@ -80,7 +102,9 @@ public sealed class SearchEngine : ISearchService
             index.Volumes.Where(v => !v.IsLive).Select(v => v.Drive.ToString()).ToArray(),
             index.Failures.Select(f => $"{f.Key}: {f.Value.Message}").ToArray(),
             _buildSeconds,
-            Protocol.Version);
+            Protocol.Version,
+            Interlocked.Read(ref _detailsCounter),
+            _detailsReady);
     }
 
     public string ResolveRoot(string root) => GetScope(RequireIndex(), root).RootPath;
@@ -98,6 +122,8 @@ public sealed class SearchEngine : ISearchService
             IncludeSystem = request.IncludeSystem,
             ModifiedFrom = request.ModifiedFrom,
             ModifiedTo = request.ModifiedTo,
+            MinSize = request.MinSize,
+            MaxSize = request.MaxSize,
         });
         ResultSorter.Sort(results, request.Sort, request.Descending);
         double elapsed = sw.Elapsed.TotalMilliseconds;

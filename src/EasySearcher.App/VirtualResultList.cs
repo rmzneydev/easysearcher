@@ -12,10 +12,13 @@ sealed class VirtualResultList : IList
 {
     const int PageSize = 100;
     const int MaxCachedPages = 300;
+    // Paginas usadas hace poco: son las que estan (o estuvieron) en pantalla y se refrescan en vivo
+    const int RecentPages = 6;
 
     readonly ISearchService _service;
     readonly Action _onExpired;
     readonly Dictionary<int, ResultRow[]> _pages = [];
+    readonly LinkedList<int> _recent = new();
     bool _expired;
 
     public int SearchId { get; }
@@ -41,6 +44,7 @@ sealed class VirtualResultList : IList
 
     ResultRow[] GetPage(int page)
     {
+        Touch(page);
         if (_pages.TryGetValue(page, out var rows)) return rows;
 
         int start = page * PageSize;
@@ -69,6 +73,46 @@ sealed class VirtualResultList : IList
         _pages[page] = rows;
         if (data.Length > 0) LoadDetails(start, rows);
         return rows;
+    }
+
+    void Touch(int page)
+    {
+        if (_recent.First?.Value == page) return;
+        _recent.Remove(page);
+        _recent.AddFirst(page);
+        if (_recent.Count > RecentPages) _recent.RemoveLast();
+    }
+
+    /// <summary>
+    /// Vuelve a pedir al motor las paginas que estan en pantalla y actualiza sus filas en el lugar (nombre
+    /// y carpeta si <paramref name="rows"/>, y siempre tamano y fecha). El resto de paginas en cache se
+    /// descarta: se cargaran frescas si se vuelven a mostrar.
+    /// </summary>
+    public void Refresh(bool rows)
+    {
+        foreach (var stale in _pages.Keys.Where(p => !_recent.Contains(p)).ToList())
+            _pages.Remove(stale);
+
+        foreach (int page in _recent)
+        {
+            if (!_pages.TryGetValue(page, out var cached)) continue;
+            int start = page * PageSize;
+            if (rows)
+            {
+                RowData[] data;
+                try
+                {
+                    data = _service.GetRows(SearchId, start, cached.Length);
+                }
+                catch (SearchServiceException)
+                {
+                    return;
+                }
+                for (int i = 0; i < data.Length && i < cached.Length; i++)
+                    cached[i].Update(data[i]);
+            }
+            LoadDetails(start, cached);
+        }
     }
 
     async void LoadDetails(int start, ResultRow[] rows)

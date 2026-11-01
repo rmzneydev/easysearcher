@@ -17,7 +17,7 @@ public sealed class FileIndex : IDisposable
     public int Count => Volumes.Sum(v => v.Count);
 
     /// <summary>Se dispara (en un hilo de fondo) cuando <see cref="StartWatching"/> aplica cambios al indice.</summary>
-    public event EventHandler? Changed;
+    public event EventHandler<IndexChange>? Changed;
 
     internal FileIndex(IReadOnlyList<VolumeIndex> volumes, IReadOnlyDictionary<char, Exception> failures)
     {
@@ -56,22 +56,43 @@ public sealed class FileIndex : IDisposable
         return new FileIndex(volumes.OfType<VolumeIndex>().ToArray(), failures);
     }
 
-    /// <summary>Aplica los cambios del USN Journal de todas las unidades. Devuelve true si algo cambio.</summary>
-    public bool Update()
+    /// <summary>Aplica los cambios del USN Journal de todas las unidades e indica que cambio.</summary>
+    public IndexChange Update()
     {
-        bool changed = false;
+        var change = IndexChange.None;
         foreach (var volume in Volumes)
         {
             try
             {
-                changed |= volume.Update();
+                change |= volume.Update();
             }
             catch (Exception ex) when (ex is Win32Exception or IOException or UnauthorizedAccessException)
             {
                 // La unidad pudo desmontarse; se reintenta en la siguiente vuelta
             }
         }
-        return changed;
+        return change;
+    }
+
+    /// <summary>
+    /// Lee de la $MFT el tamano y la fecha de todas las entradas de todas las unidades (ver
+    /// <see cref="VolumeIndex.LoadDetailsFromMft"/>). Si una unidad falla, sus datos se siguen pidiendo
+    /// archivo por archivo cuando hagan falta. Devuelve cuantas entradas se completaron.
+    /// </summary>
+    public int LoadDetailsFromMft(CancellationToken cancellationToken = default)
+    {
+        int filled = 0;
+        foreach (var volume in Volumes)
+        {
+            try
+            {
+                filled += volume.LoadDetailsFromMft(cancellationToken);
+            }
+            catch (Exception ex) when (ex is Win32Exception or IOException or UnauthorizedAccessException or InvalidDataException)
+            {
+            }
+        }
+        return filled;
     }
 
     /// <summary>Revisa el USN Journal cada <paramref name="interval"/> y dispara <see cref="Changed"/> si hubo cambios.</summary>
@@ -87,7 +108,8 @@ public sealed class FileIndex : IDisposable
             {
                 while (await timer.WaitForNextTickAsync(cts.Token))
                 {
-                    if (Update()) Changed?.Invoke(this, EventArgs.Empty);
+                    var change = Update();
+                    if (change != IndexChange.None) Changed?.Invoke(this, change);
                 }
             }
             catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException)
@@ -127,20 +149,29 @@ public sealed class FileIndex : IDisposable
                 volume.Search(query, options.Kind, scope, options.IncludeSystem, results, cancellationToken);
         }
 
-        if (options.ModifiedFrom is not null || options.ModifiedTo is not null)
-            results = FilterByModified(results, options.ModifiedFrom, options.ModifiedTo, cancellationToken);
+        if (options.ModifiedFrom is not null || options.ModifiedTo is not null || options.MinSize is not null || options.MaxSize is not null)
+            results = FilterByDetails(results, options, cancellationToken);
         return results;
     }
 
-    /// <summary>Deja las entradas modificadas en [from, to). Consulta la fecha en paralelo; queda en cache.</summary>
-    static List<SearchResult> FilterByModified(List<SearchResult> results, DateTime? from, DateTime? to,
-        CancellationToken cancellationToken)
+    /// <summary>
+    /// Deja las entradas cuya fecha esta en [ModifiedFrom, ModifiedTo) y cuyo tamano esta en [MinSize, MaxSize).
+    /// Con filtro de tamano se excluyen las carpetas. Los datos salen de la cache (cargada desde la $MFT) o
+    /// se consultan en paralelo.
+    /// </summary>
+    static List<SearchResult> FilterByDetails(List<SearchResult> results, SearchOptions options, CancellationToken cancellationToken)
     {
+        var (from, to) = (options.ModifiedFrom, options.ModifiedTo);
+        var (minSize, maxSize) = (options.MinSize, options.MaxSize);
+        bool byDate = from is not null || to is not null;
+        bool bySize = minSize is not null || maxSize is not null;
+
         var keep = new bool[results.Count];
         Parallel.For(0, results.Count, new ParallelOptions { CancellationToken = cancellationToken }, i =>
         {
-            var modified = results[i].Modified;
-            keep[i] = modified is { } m && (from is null || m >= from) && (to is null || m < to);
+            var details = results[i].Details;
+            keep[i] = (!byDate || details.Modified is { } m && (from is null || m >= from) && (to is null || m < to)) &&
+                      (!bySize || details.Size is { } s && (minSize is null || s >= minSize) && (maxSize is null || s < maxSize));
         });
 
         var filtered = new List<SearchResult>();

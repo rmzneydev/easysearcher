@@ -131,9 +131,24 @@ public partial class MainWindow : Window
 
             if (!status.Ready) return;
             if (!_rootApplied)
+            {
                 await ApplyRootAsync();
-            else if (previous is { Ready: true } && previous.ChangeCounter != status.ChangeCounter)
-                await SearchAsync(preserveView: true);
+            }
+            else if (previous is { Ready: true })
+            {
+                if (previous.ChangeCounter != status.ChangeCounter)
+                {
+                    // Altas, bajas, renombres o movimientos: se repite la busqueda
+                    await SearchAsync(preserveView: true);
+                }
+                else if (previous.DetailsCounter != status.DetailsCounter)
+                {
+                    // Solo cambiaron tamanos o fechas: si ordenan o filtran el resultado se repite la
+                    // busqueda; si no, basta con refrescar las filas en pantalla
+                    if (DependsOnDetails) await SearchAsync(preserveView: true);
+                    else (ResultsList.ItemsSource as VirtualResultList)?.Refresh(rows: false);
+                }
+            }
         }
         finally
         {
@@ -188,12 +203,16 @@ public partial class MainWindow : Window
             : $"  ·  sin actualizacion en vivo en {string.Join(" ", status.NotLive.Select(d => d + ":"))}";
         if (status.Failures.Length > 0)
             text += "   |   No indexadas: " + string.Join("; ", status.Failures);
+        if (!status.DetailsReady && ServiceUpToDate)
+            text += "  ·  leyendo tamaños y fechas...";
         if (!ServiceUpToDate)
-            text += "   |   El servicio instalado es una version anterior: actualiza EasySearcher para filtrar por fecha o por tipo";
+            text += "   |   El servicio instalado es una version anterior: actualiza EasySearcher para filtrar por fecha, tamaño o tipo";
         StatusText.Text = text + source;
 
         DateBox.IsEnabled = ServiceUpToDate;
         DateBox.ToolTip = ServiceUpToDate ? "Fecha de modificacion" : "Requiere actualizar el servicio de EasySearcher";
+        SizeBox.IsEnabled = ServiceUpToDate;
+        SizeBox.ToolTip = ServiceUpToDate ? "Tamaño" : "Requiere actualizar el servicio de EasySearcher";
         // Las categorias (Imagenes, Videos...) tampoco las entiende un servicio anterior
         for (int i = (int)EntryKind.Images; i < KindBox.Items.Count; i++)
             ((ComboBoxItem)KindBox.Items[i]).IsEnabled = ServiceUpToDate;
@@ -256,8 +275,14 @@ public partial class MainWindow : Window
         string dateText = DateFilter.Describe(preset, FromDate.SelectedDate, ToDate.SelectedDate);
         if (dateText.Length > 0) where += $", {dateText}";
 
-        // Sin texto solo se busca si hay filtro de fecha (p. ej. "todo lo modificado hoy en Descargas")
-        if (text.Length == 0 && from is null && to is null)
+        var sizePreset = ServiceUpToDate ? (SizePreset)SizeBox.SelectedIndex : SizePreset.Any;
+        var (minSize, maxSize) = SizeFilter.GetRange(sizePreset);
+        string sizeText = SizeFilter.Describe(sizePreset);
+        if (sizeText.Length > 0) where += $", {sizeText}";
+        bool detailFilter = from is not null || to is not null || minSize is not null || maxSize is not null;
+
+        // Sin texto solo se busca si hay filtro de fecha o tamano (p. ej. "lo de mas de 4 GB en D:\")
+        if (text.Length == 0 && !detailFilter)
         {
             ResultsList.ItemsSource = null;
             ResultText.Text = $"Buscando en {where}";
@@ -274,18 +299,25 @@ public partial class MainWindow : Window
             _settings.SortDescending,
             preserveView ? current?.SearchId ?? 0 : 0,
             from,
-            to);
+            to,
+            minSize,
+            maxSize);
 
         try
         {
-            if (!preserveView && (from is not null || to is not null))
-                ResultText.Text = "Filtrando por fecha...";
+            if (!preserveView && detailFilter && _status?.DetailsReady != true)
+                ResultText.Text = "Filtrando (todavia se estan leyendo tamaños y fechas)...";
             var response = await Task.Run(() => service.Search(request));
             // Si mientras tanto se lanzo otra busqueda, esta respuesta ya no interesa
             if (version != _searchVersion) return;
 
             ResultText.Text = $"{response.Total:N0} resultados en {where}  ·  {response.ElapsedMs:N0} ms";
-            if (preserveView && response.Unchanged) return;
+            if (preserveView && response.Unchanged)
+            {
+                // Mismas entradas, pero pueden haber cambiado de nombre, carpeta o tamano
+                current?.Refresh(rows: true);
+                return;
+            }
 
             var list = new VirtualResultList(service, response.SearchId, response.Total,
                 onExpired: () => Dispatcher.InvokeAsync(() => SearchAsync(preserveView: true)));
@@ -426,6 +458,14 @@ public partial class MainWindow : Window
     }
 
     async void CustomDate_Changed(object? sender, SelectionChangedEventArgs e) => await SearchAsync();
+
+    async void SizeBox_SelectionChanged(object sender, SelectionChangedEventArgs e) => await SearchAsync();
+
+    /// <summary>El resultado depende de tamanos o fechas: hay que repetir la busqueda si cambian.</summary>
+    bool DependsOnDetails =>
+        _settings.SortColumn is SortColumn.Size or SortColumn.Modified ||
+        DateBox.SelectedIndex != (int)DatePreset.Any ||
+        SizeBox.SelectedIndex != (int)SizePreset.Any;
 
     void ViewBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {

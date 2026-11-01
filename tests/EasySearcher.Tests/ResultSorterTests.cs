@@ -33,6 +33,31 @@ public class ResultSorterTests
             results.Select(r => r.FullPath));
     }
 
+    [Theory]
+    [InlineData("Árbol.txt", "Arbol.txt")]
+    [InlineData("Ñandú", "Nandu")]
+    [InlineData("ÉXITO", "EXITO")]
+    [InlineData("plain ascii.txt", "plain ascii.txt")]
+    public void Sort_keys_ignore_accents(string name, string key)
+    {
+        Assert.Equal(key, ResultSorter.SortKey(name));
+    }
+
+    [Fact]
+    public void Accented_names_sort_next_to_their_letter()
+    {
+        var volume = VolumeIndex.FromRecords('d',
+        [
+            Rec(Root, Root, DirAttr, "."),
+            Rec(10, Root, FileAttr, "Zeta.txt"),
+            Rec(11, Root, FileAttr, "Árbol.txt"),
+            Rec(12, Root, FileAttr, "Barco.txt"),
+        ]);
+        var results = new FileIndex([volume], new Dictionary<char, Exception>()).Search("");
+        ResultSorter.Sort(results, SortColumn.Name, descending: false);
+        Assert.Equal(["Árbol.txt", "Barco.txt", "Zeta.txt"], results.Select(r => r.Name));
+    }
+
     [Fact]
     public void Sorting_the_same_results_twice_gives_the_same_order()
     {

@@ -21,4 +21,10 @@ public sealed record SearchOptions
 
     /// <summary>Solo entradas modificadas antes de esta fecha (excluida), en hora local.</summary>
     public DateTime? ModifiedTo { get; init; }
+
+    /// <summary>Solo archivos de al menos estos bytes. Con filtro de tamano no aparecen carpetas.</summary>
+    public long? MinSize { get; init; }
+
+    /// <summary>Solo archivos de menos de estos bytes.</summary>
+    public long? MaxSize { get; init; }
 }

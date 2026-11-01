@@ -24,6 +24,11 @@ sealed class IndexWorker(ILogger<IndexWorker> logger) : BackgroundService
         foreach (var failure in status.Failures)
             logger.LogWarning("No indexada: {Failure}", failure);
 
+        var detailsClock = System.Diagnostics.Stopwatch.StartNew();
+        int filled = await engine.DetailsLoaded;
+        logger.LogInformation("Tamanos y fechas leidos de la $MFT: {Filled:N0} entradas en {Seconds:N1} s",
+            filled, detailsClock.Elapsed.TotalSeconds);
+
         await server;
     }
 }

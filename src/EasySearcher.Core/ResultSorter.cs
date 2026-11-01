@@ -1,3 +1,6 @@
+using System.Globalization;
+using System.Text;
+
 namespace EasySearcher.Core;
 
 public enum SortColumn
@@ -22,14 +25,14 @@ public static class ResultSorter
 
         var parallel = new ParallelOptions { CancellationToken = cancellationToken };
         var names = new string[n];
-        Parallel.For(0, n, parallel, i => names[i] = results[i].Name);
+        Parallel.For(0, n, parallel, i => names[i] = SortKey(results[i].Name));
 
         Comparison<int> primary;
         switch (column)
         {
             case SortColumn.Folder:
                 var folders = new string[n];
-                Parallel.For(0, n, parallel, i => folders[i] = results[i].DirectoryPath);
+                Parallel.For(0, n, parallel, i => folders[i] = SortKey(results[i].DirectoryPath));
                 primary = (a, b) => StringComparer.OrdinalIgnoreCase.Compare(folders[a], folders[b]);
                 break;
             case SortColumn.Size:
@@ -64,5 +67,24 @@ public static class ResultSorter
         for (int i = 0; i < n; i++) sorted[i] = results[order[i]];
         results.Clear();
         results.AddRange(sorted);
+    }
+
+    /// <summary>
+    /// Clave de orden sin tildes ("Árbol" -> "Arbol"), para que los acentos no manden el nombre al final.
+    /// Se compara luego sin distinguir mayusculas (ordinal, rapido). Los nombres solo ASCII, la gran
+    /// mayoria, se usan tal cual sin crear strings nuevos.
+    /// </summary>
+    internal static string SortKey(string text)
+    {
+        if (Ascii.IsValid(text)) return text;
+
+        var decomposed = text.Normalize(NormalizationForm.FormD);
+        var key = new StringBuilder(decomposed.Length);
+        foreach (char c in decomposed)
+        {
+            if (CharUnicodeInfo.GetUnicodeCategory(c) != UnicodeCategory.NonSpacingMark)
+                key.Append(c);
+        }
+        return key.ToString().Normalize(NormalizationForm.FormC);
     }
 }

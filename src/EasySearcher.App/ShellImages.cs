@@ -30,6 +30,10 @@ static class ShellImages
 
     const int WorkerCount = 3;
     const int MaxQueued = 300;
+    // Un generador de miniaturas de terceros puede colgarse: pasado este tiempo se abandona su hilo
+    static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
+    // Tope de hilos de reemplazo, para que un generador que siempre se cuelga no los multiplique sin fin
+    const int MaxReplacements = 6;
 
     // Estos tipos tienen un icono propio por archivo; el resto comparte el icono de su extension
     static readonly HashSet<string> PerFileIconExtensions = new(StringComparer.OrdinalIgnoreCase)
@@ -44,6 +48,9 @@ static class ShellImages
     static readonly HashSet<string> Failed = [];
     static readonly Dictionary<string, Request> Pending = [];
     static readonly LinkedList<Request> Queue = new();
+    static readonly List<Worker> Workers = [];
+    static readonly Timer Watchdog;
+    static int _replacements;
 
     /// <summary>Escala de pixeles por DIP de la pantalla, para pedir imagenes nitidas.</summary>
     public static double Scale { get; set; } = 1;
@@ -51,12 +58,41 @@ static class ShellImages
     static ShellImages()
     {
         for (int i = 0; i < WorkerCount; i++)
+            StartWorker();
+        Watchdog = new Timer(_ => CheckHungWorkers(), null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
+    }
+
+    static void StartWorker()
+    {
+        var worker = new Worker();
+        lock (Workers) Workers.Add(worker);
+        var thread = new Thread(() => Work(worker)) { IsBackground = true, Name = "ShellImages" };
+        // El shell exige COM en modo STA
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+    }
+
+    /// <summary>
+    /// Abandona los hilos que llevan demasiado con una imagen: la marca como fallida y crea otro hilo.
+    /// El hilo colgado no se puede detener; si algun dia termina, descarta su resultado y sale.
+    /// </summary>
+    static void CheckHungWorkers()
+    {
+        var now = Environment.TickCount64;
+        List<Request> abandoned = [];
+        lock (Workers)
         {
-            var thread = new Thread(Work) { IsBackground = true, Name = $"ShellImages {i}" };
-            // El shell exige COM en modo STA
-            thread.SetApartmentState(ApartmentState.STA);
-            thread.Start();
+            foreach (var worker in Workers.ToList())
+            {
+                if (worker.Current is not { } request || now - worker.StartedAt < Timeout.TotalMilliseconds) continue;
+                worker.Abandoned = true;
+                Workers.Remove(worker);
+                abandoned.Add(request);
+                if (_replacements++ < MaxReplacements) StartWorker();
+            }
         }
+        foreach (var request in abandoned)
+            UiDispatcher.InvokeAsync(() => Complete(request, null), DispatcherPriority.Background);
     }
 
     /// <summary>
@@ -113,7 +149,7 @@ static class ShellImages
         }
     }
 
-    static void Work()
+    static void Work(Worker worker)
     {
         while (true)
         {
@@ -125,13 +161,26 @@ static class ShellImages
                 Queue.RemoveFirst();
             }
 
+            lock (Workers)
+            {
+                worker.StartedAt = Environment.TickCount64;
+                worker.Current = request;
+            }
             var image = Load(request.Path, request.Size, request.IconOnly);
+            lock (Workers)
+            {
+                // El vigilante ya dio esta imagen por fallida y puso otro hilo en su lugar
+                if (worker.Abandoned) return;
+                worker.Current = null;
+            }
             UiDispatcher.InvokeAsync(() => Complete(request, image), DispatcherPriority.Background);
         }
     }
 
     static void Complete(Request request, BitmapSource? image)
     {
+        // Solo si sigue siendo la pendiente para esa clave (no una pedida de nuevo mas tarde)
+        if (Pending.TryGetValue(request.Key, out var pending) && pending != request) return;
         Pending.Remove(request.Key);
         if (image is null)
         {
@@ -213,9 +262,23 @@ static class ShellImages
         return source;
     }
 
-    sealed record Request(string Key, string Path, int Size, bool IconOnly, LruCache<string, BitmapSource> Cache)
+    // class y no record: se compara por referencia (dos pedidos de la misma imagen son distintos)
+    sealed class Request(string key, string path, int size, bool iconOnly, LruCache<string, BitmapSource> cache)
     {
+        public string Key { get; } = key;
+        public string Path { get; } = path;
+        public int Size { get; } = size;
+        public bool IconOnly { get; } = iconOnly;
+        public LruCache<string, BitmapSource> Cache { get; } = cache;
         public List<(ResultRow Row, string Property)> Waiting { get; } = [];
+    }
+
+    /// <summary>Estado de un hilo de carga, para el vigilante. Se lee y escribe bajo lock(Workers).</summary>
+    sealed class Worker
+    {
+        public Request? Current;
+        public long StartedAt;
+        public bool Abandoned;
     }
 
     [Flags]

@@ -41,6 +41,9 @@ public sealed class VolumeIndex : IDisposable
     int _count;
     bool _flagsDirty;
 
+    // Mientras se lee el tamano/fecha de la $MFT, entradas que el journal cambio (sus datos leidos ya son viejos)
+    HashSet<int>? _changedDuringDetailsLoad;
+
     JournalInfo? _journal;
     long _nextUsn;
 
@@ -183,73 +186,74 @@ public sealed class VolumeIndex : IDisposable
     }
 
     /// <summary>
-    /// Aplica los cambios pendientes del USN Journal. Devuelve true si cambiaron nombres, ubicaciones o
-    /// atributos; los cambios solo de contenido descartan el tamano/fecha en cache pero devuelven false.
+    /// Aplica los cambios pendientes del USN Journal e indica que cambio: la estructura (nombres,
+    /// ubicaciones, atributos) o solo el contenido (tamano/fecha en cache descartados).
     /// No es seguro llamarlo desde varios hilos a la vez.
     /// </summary>
-    public bool Update()
+    public IndexChange Update()
     {
-        if (_journal is not { } journal || _volume is not { } volume) return false;
+        if (_journal is not { } journal || _volume is not { } volume) return IndexChange.None;
 
         var records = new List<JournalRecord>();
         long nextUsn = _nextUsn;
         if (!MftReader.ReadJournal(volume, Drive, journal.Id, ref nextUsn, records))
         {
             Load();
-            return true;
+            return IndexChange.Structure | IndexChange.Details;
         }
         _nextUsn = nextUsn;
         return ApplyRecords(records);
     }
 
-    /// <summary>Aplica registros del journal ya leidos. Devuelve true si cambio la estructura del indice.</summary>
-    internal bool ApplyRecords(IReadOnlyList<JournalRecord> records)
+    /// <summary>Aplica registros del journal ya leidos.</summary>
+    internal IndexChange ApplyRecords(IReadOnlyList<JournalRecord> records)
     {
-        if (records.Count == 0) return false;
+        if (records.Count == 0) return IndexChange.None;
 
-        bool structural = false;
+        var change = IndexChange.None;
         _lock.EnterWriteLock();
         try
         {
             foreach (var record in records)
-                structural |= Apply(record);
+                change |= Apply(record);
             if (_flagsDirty) ComputeFlags();
-            if (structural) Version++;
+            if ((change & IndexChange.Structure) != 0) Version++;
         }
         finally
         {
             _lock.ExitWriteLock();
         }
-        return structural;
+        return change;
     }
 
-    /// <summary>Aplica un registro del journal. Devuelve true si cambio la estructura del indice.</summary>
-    bool Apply(in JournalRecord r)
+    IndexChange Apply(in JournalRecord r)
     {
-        if (r.Frn == RootFrn || r.Frn > int.MaxValue) return false;
+        if (r.Frn == RootFrn || r.Frn > int.MaxValue) return IndexChange.None;
         int i = (int)r.Frn;
         bool exists = Exists(i);
+        _changedDuringDetailsLoad?.Add(i);
 
         if ((r.Reason & MftReader.StructuralReasons) == 0)
         {
             // Solo cambio el contenido: basta con olvidar el tamano y la fecha
-            if (exists) _details.Invalidate(i);
-            return false;
+            if (!exists) return IndexChange.None;
+            _details.Invalidate(i);
+            return IndexChange.Details;
         }
 
         if ((r.Reason & MftReader.ReasonFileDelete) != 0)
         {
-            if (!exists) return false;
+            if (!exists) return IndexChange.None;
             // El nombre se conserva para que los resultados ya mostrados no queden en blanco
             _flags[i] |= Empty;
             _count--;
             _details.Invalidate(i);
-            return true;
+            return IndexChange.Structure;
         }
 
         // El registro con el nombre viejo de un renombrado no aporta nada: le sigue el del nombre nuevo
         if ((r.Reason & (MftReader.ReasonRenameOldName | MftReader.ReasonRenameNewName)) == MftReader.ReasonRenameOldName)
-            return false;
+            return IndexChange.None;
 
         uint parent = r.Parent > uint.MaxValue ? uint.MaxValue : (uint)r.Parent;
         if (exists)
@@ -271,7 +275,7 @@ public sealed class VolumeIndex : IDisposable
         _names[i] = r.Name;
         _details.Invalidate(i);
         _flags[i] = ComputeEntryFlags(i);
-        return true;
+        return IndexChange.Structure;
     }
 
     void EnsureSlot(int slot)
@@ -422,6 +426,74 @@ public sealed class VolumeIndex : IDisposable
             _lock.ExitReadLock();
         }
         return ToDetails(size, modified);
+    }
+
+    /// <summary>
+    /// Lee el tamano y la fecha de todas las entradas de la $MFT cruda y los deja en cache, para que ordenar
+    /// y filtrar por tamano o fecha no tengan que consultar el disco archivo por archivo. Tarda unos
+    /// segundos; el indice se puede usar mientras tanto. Devuelve cuantas entradas se completaron.
+    /// </summary>
+    public int LoadDetailsFromMft(CancellationToken cancellationToken = default)
+    {
+        if (_volume is not { } volume) return 0;
+
+        int slots, generation;
+        _lock.EnterWriteLock();
+        try
+        {
+            slots = _names.Count;
+            generation = Generation;
+            _changedDuringDetailsLoad = [];
+        }
+        finally
+        {
+            _lock.ExitWriteLock();
+        }
+
+        var sizes = new long[slots];
+        var dates = new long[slots];
+        Array.Fill(sizes, MftDetailsReader.Unknown);
+        Array.Fill(dates, MftDetailsReader.Unknown);
+        try
+        {
+            MftDetailsReader.Read(volume, Drive, (frn, size, modified) =>
+            {
+                if (frn >= slots) return;
+                if (size != MftDetailsReader.Unknown) sizes[frn] = size;
+                if (modified != MftDetailsReader.Unknown) dates[frn] = modified;
+            }, cancellationToken);
+        }
+        catch
+        {
+            _lock.EnterWriteLock();
+            try { _changedDuringDetailsLoad = null; }
+            finally { _lock.ExitWriteLock(); }
+            throw;
+        }
+
+        int filled = 0;
+        _lock.EnterWriteLock();
+        try
+        {
+            var changed = _changedDuringDetailsLoad!;
+            _changedDuringDetailsLoad = null;
+            // Si mientras tanto se volvio a enumerar la MFT, los numeros de registro ya no corresponden
+            if (Generation != generation) return 0;
+
+            for (int i = 0; i < slots; i++)
+            {
+                if (dates[i] == MftDetailsReader.Unknown || (_flags[i] & Empty) != 0 || changed.Contains(i)) continue;
+                long size = IsDirectoryCore(i) ? NoSize : sizes[i];
+                if (size == MftDetailsReader.Unknown) continue;
+                _details.Set(i, size, dates[i]);
+                filled++;
+            }
+        }
+        finally
+        {
+            _lock.ExitWriteLock();
+        }
+        return filled;
     }
 
     static FileDetails ToDetails(long size, long modified) => new(

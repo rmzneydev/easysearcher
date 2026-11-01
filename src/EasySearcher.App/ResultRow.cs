@@ -17,10 +17,24 @@ sealed class ResultRow(RowData data) : INotifyPropertyChanged, IEquatable<Result
 
     public char Drive { get; } = data.Drive;
     public int Entry { get; } = data.Entry;
-    public string Name { get; } = data.Name;
-    public string DirectoryPath { get; } = data.Directory;
+    public string Name { get; private set; } = data.Name;
+    public string DirectoryPath { get; private set; } = data.Directory;
     public bool IsDirectory { get; } = data.IsDirectory;
     public string FullPath => Path.Join(DirectoryPath, Name);
+
+    /// <summary>La entrada se renombro o se movio: actualiza la fila en pantalla sin rehacer la lista.</summary>
+    public void Update(RowData data)
+    {
+        if (data.Drive != Drive || data.Entry != Entry) return;
+        if (data.Name == Name && data.Directory == DirectoryPath) return;
+
+        Name = data.Name;
+        DirectoryPath = data.Directory;
+        // La ruta cambio: tambien el icono y la miniatura, que se buscan por ruta
+        foreach (var property in new[] { nameof(Name), nameof(DirectoryPath), nameof(FullPath),
+                     nameof(SmallIcon), nameof(MediumThumbnail), nameof(LargeThumbnail) })
+            NotifyChanged(property);
+    }
 
     public long? Size
     {

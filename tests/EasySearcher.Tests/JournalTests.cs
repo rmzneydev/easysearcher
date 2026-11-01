@@ -28,7 +28,7 @@ public class JournalTests
     [Fact]
     public void New_file_appears_including_in_an_existing_scope()
     {
-        Assert.True(_volume.ApplyRecords([Rec(500, 103, FileAttr, "In The End.mp3", Create)]));
+        Assert.Equal(IndexChange.Structure, _volume.ApplyRecords([Rec(500, 103, FileAttr, "In The End.mp3", Create)]));
         Assert.Contains("In The End.mp3", InMusica());
         Assert.Equal(@"D:\Musica\Live\In The End.mp3", _index.Search("in the end").Single().FullPath);
     }
@@ -57,7 +57,7 @@ public class JournalTests
     public void Deleted_entries_disappear_and_count_decreases()
     {
         int before = _volume.Count;
-        Assert.True(_volume.ApplyRecords([Rec(101, 100, FileAttr, "Linkin Park - Numb.mp3", Delete)]));
+        Assert.Equal(IndexChange.Structure, _volume.ApplyRecords([Rec(101, 100, FileAttr, "Linkin Park - Numb.mp3", Delete)]));
         Assert.Empty(_index.Search("numb"));
         Assert.Equal(before - 1, _volume.Count);
     }
@@ -87,9 +87,27 @@ public class JournalTests
     }
 
     [Fact]
-    public void Content_only_changes_are_not_structural()
+    public void Content_only_changes_report_details_not_structure()
     {
-        Assert.False(_volume.ApplyRecords([Rec(201, 200, FileAttr, "notas.txt", DataExtend)]));
+        Assert.Equal(IndexChange.Details, _volume.ApplyRecords([Rec(201, 200, FileAttr, "notas.txt", DataExtend)]));
         Assert.Single(_index.Search("notas"));
+    }
+
+    [Fact]
+    public void A_batch_can_report_both_kinds_of_change()
+    {
+        var change = _volume.ApplyRecords(
+        [
+            Rec(201, 200, FileAttr, "notas.txt", DataExtend),
+            Rec(500, 200, FileAttr, "nuevo.txt", Create),
+        ]);
+        Assert.Equal(IndexChange.Structure | IndexChange.Details, change);
+    }
+
+    [Fact]
+    public void Changes_to_unknown_entries_are_ignored()
+    {
+        Assert.Equal(IndexChange.None, _volume.ApplyRecords([Rec(999, 200, FileAttr, "fantasma.txt", DataExtend)]));
+        Assert.Equal(IndexChange.None, _volume.ApplyRecords([Rec(999, 200, FileAttr, "fantasma.txt", Delete)]));
     }
 }
