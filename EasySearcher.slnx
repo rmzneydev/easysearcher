@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/EasySearcher.App/EasySearcher.App.csproj" />
+    <Project Path="src/EasySearcher.Core/EasySearcher.Core.csproj" />
+  </Folder>
+</Solution>
