@@ -26,44 +26,72 @@ WriteIco(output, images);
 File.WriteAllBytes(Path.ChangeExtension(output, ".png"), images[^1].Png);
 Console.WriteLine($"{output}: {string.Join(", ", sizes)} px");
 
+// Diseno "Variante C - Tile con rayo" (Claude Design): cuadrado azul, lupa blanca con sombra y un rayo
+// ambar dentro del cristal. A 24 px o menos queda solo la lupa sobre el tile, para que se lea.
 static byte[] Render(int size)
 {
     double s = size;
+    double m = s * 0.03;
+    double t = s - 2 * m;
+    Point P(double u, double v) => new(m + u * t, m + v * t);  // coordenadas relativas al tile (0..1)
+    double L(double u) => u * t;
+    bool detailed = size >= 32;
+
     var visual = new DrawingVisual();
     using (var dc = visual.RenderOpen())
     {
-        // Fondo: cuadrado redondeado azul con degradado vertical
-        var background = new LinearGradientBrush(Color.FromRgb(0x3B, 0x82, 0xF6), Color.FromRgb(0x1D, 0x4E, 0xD8), 90);
-        double margin = s * 0.03;
-        double radius = s * 0.22;
-        dc.DrawRoundedRectangle(background, null, new Rect(margin, margin, s - 2 * margin, s - 2 * margin), radius, radius);
-
-        // Lupa blanca: aro y mango a 45 grados
-        double stroke = Math.Max(1.6, s * 0.105);
-        var ring = new Pen(Brushes.White, stroke);
-        var center = new Point(s * 0.43, s * 0.43);
-        double r = s * 0.205;
-        dc.DrawEllipse(null, ring, center, r, r);
-
-        var handle = new Pen(Brushes.White, stroke * 1.3) { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round };
-        double offset = (r + stroke * 0.45) * Math.Sqrt(0.5);
-        dc.DrawLine(handle, new Point(center.X + offset, center.Y + offset), new Point(s * 0.77, s * 0.77));
-
-        // Brillo en el cristal (solo donde hay pixeles suficientes para que se vea)
-        if (size >= 32)
+        // Tile: degradado diagonal de azul claro a azul profundo, con un borde claro sutil
+        var tile = new Rect(m, m, t, t);
+        double radius = L(0.24);
+        var tileBrush = new LinearGradientBrush(Color.FromRgb(0x5E, 0x9E, 0xFB), Color.FromRgb(0x1D, 0x4E, 0xD8), new Point(0, 0), new Point(1, 1));
+        dc.DrawRoundedRectangle(tileBrush, null, tile, radius, radius);
+        if (detailed)
         {
-            var glint = new Pen(new SolidColorBrush(Color.FromArgb(0xB0, 0xFF, 0xFF, 0xFF)), stroke * 0.45)
-            {
-                StartLineCap = PenLineCap.Round,
-                EndLineCap = PenLineCap.Round,
-            };
-            double gr = r * 0.55;
-            var arc = new PathGeometry([new PathFigure(
-                new Point(center.X - gr, center.Y),
-                [new ArcSegment(new Point(center.X, center.Y - gr), new Size(gr, gr), 0, false, SweepDirection.Clockwise, true)],
-                false)]);
-            dc.DrawGeometry(null, glint, arc);
+            double inset = L(0.008);
+            var rim = new Pen(new SolidColorBrush(Color.FromArgb(0x80, 0x93, 0xC5, 0xFD)), L(0.016));
+            dc.DrawRoundedRectangle(null, rim, Rect.Inflate(tile, -inset, -inset), radius - inset, radius - inset);
         }
+
+        // Geometria de la lupa: aro (radio medio y grosor) y mango a 45 grados
+        var center = P(0.4375, 0.425);
+        double ringRadius = L(0.23);
+        double ringWidth = Math.Max(1.6, L(0.10));
+        double handleWidth = Math.Max(2.0, L(0.115));
+        double startOffset = ringRadius * Math.Sqrt(0.5);
+        var handleStart = new Point(center.X + startOffset, center.Y + startOffset);
+        var handleEnd = P(0.785, 0.785);
+
+        Pen RingPen(Brush b) => new(b, ringWidth);
+        // Extremo plano del lado del aro: uno redondeado invadiria el cristal
+        Pen HandlePen(Brush b) => new(b, handleWidth) { StartLineCap = PenLineCap.Flat, EndLineCap = PenLineCap.Round };
+
+        if (detailed)
+        {
+            // Sombra azul oscura desplazada hacia abajo a la derecha
+            var shadow = new SolidColorBrush(Color.FromArgb(0x90, 0x1E, 0x3A, 0x8A));
+            dc.PushTransform(new TranslateTransform(L(0.012), L(0.022)));
+            dc.DrawEllipse(null, RingPen(shadow), center, ringRadius, ringRadius);
+            dc.DrawLine(HandlePen(shadow), handleStart, handleEnd);
+            dc.Pop();
+
+            // Cristal: azul con la parte de arriba mas oscura (sombra del aro)
+            double lens = ringRadius - ringWidth / 2;
+            var lensBrush = new LinearGradientBrush(Color.FromRgb(0x2B, 0x5F, 0xD6), Color.FromRgb(0x4F, 0x8F, 0xF6), 90);
+            dc.DrawEllipse(lensBrush, null, center, lens, lens);
+
+            // Rayo ambar
+            var bolt = new StreamGeometry();
+            using (var g = bolt.Open())
+            {
+                g.BeginFigure(P(0.475, 0.275), true, true);
+                g.PolyLineTo([P(0.335, 0.465), P(0.425, 0.465), P(0.395, 0.585), P(0.535, 0.385), P(0.445, 0.385)], true, true);
+            }
+            var boltBrush = new LinearGradientBrush(Color.FromRgb(0xFC, 0xD3, 0x4D), Color.FromRgb(0xF5, 0x9E, 0x0B), 90);
+            dc.DrawGeometry(boltBrush, null, bolt);
+        }
+
+        dc.DrawEllipse(null, RingPen(Brushes.White), center, ringRadius, ringRadius);
+        dc.DrawLine(HandlePen(Brushes.White), handleStart, handleEnd);
     }
 
     var bitmap = new RenderTargetBitmap(size, size, 96, 96, PixelFormats.Pbgra32);
