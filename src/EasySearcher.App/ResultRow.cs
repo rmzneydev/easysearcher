@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.IO;
 using System.Runtime.CompilerServices;
+using System.Windows.Media;
 using EasySearcher.Core.Service;
 
 namespace EasySearcher.App;
@@ -33,14 +34,26 @@ sealed class ResultRow(RowData data) : INotifyPropertyChanged, IEquatable<Result
         set => Set(ref _modified, value);
     }
 
+    // Las imagenes no se guardan en la fila (miles de filas cacheadas ocuparian mucha memoria): se leen de la
+    // cache de ShellImages, que avisa con NotifyChanged cuando una termina de cargarse
+    public ImageSource? SmallIcon => ShellImages.Get(this, ShellImageKind.SmallIcon, nameof(SmallIcon));
+    public ImageSource? MediumThumbnail => ShellImages.Get(this, ShellImageKind.MediumThumbnail, nameof(MediumThumbnail));
+    public ImageSource? LargeThumbnail => ShellImages.Get(this, ShellImageKind.LargeThumbnail, nameof(LargeThumbnail));
+
     public event PropertyChangedEventHandler? PropertyChanged;
+
+    public void NotifyChanged(string propertyName) =>
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
 
     void Set<T>(ref T field, T value, [CallerMemberName] string? name = null)
     {
         if (EqualityComparer<T>.Default.Equals(field, value)) return;
         field = value;
-        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+        NotifyChanged(name!);
     }
+
+    // Lo usan la accesibilidad (lectores de pantalla, UI Automation) y la busqueda por teclado de WPF
+    public override string ToString() => Name;
 
     public bool Equals(ResultRow? other) => other is not null && other.Drive == Drive && other.Entry == Entry;
 

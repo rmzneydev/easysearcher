@@ -16,6 +16,8 @@ public partial class MainWindow : Window
 {
     readonly Settings _settings = Settings.Load();
     readonly Dictionary<GridViewColumn, (SortColumn Sort, string Title)> _columns;
+    readonly GridView _detailsView;
+    readonly ItemsPanelTemplate _detailsPanel;
     readonly DispatcherTimer _statusTimer = new() { Interval = TimeSpan.FromSeconds(1) };
 
     ISearchService? _service;
@@ -46,6 +48,15 @@ public partial class MainWindow : Window
             [ModifiedColumn] = (SortColumn.Modified, "Modificado"),
         };
         UpdateSortHeaders();
+
+        _detailsView = (GridView)ResultsList.View;
+        _detailsPanel = ResultsList.ItemsPanel;
+        ViewBox.SelectedIndex = (int)_settings.ViewMode;
+        ApplyViewMode();
+
+        // Las miniaturas se piden en pixeles reales para que se vean nitidas con escalado de pantalla
+        Loaded += (_, _) => ShellImages.Scale = VisualTreeHelper.GetDpi(this).DpiScaleX;
+        DpiChanged += (_, e) => ShellImages.Scale = e.NewDpi.DpiScaleX;
 
         _statusTimer.Tick += async (_, _) => await PollStatusAsync();
         Loaded += async (_, _) =>
@@ -415,6 +426,38 @@ public partial class MainWindow : Window
     }
 
     async void CustomDate_Changed(object? sender, SelectionChangedEventArgs e) => await SearchAsync();
+
+    void ViewBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        // Se dispara durante InitializeComponent, antes de que exista la lista
+        if (ResultsList is null || _detailsView is null) return;
+        _settings.ViewMode = (ViewMode)ViewBox.SelectedIndex;
+        _settings.Save();
+        ApplyViewMode();
+    }
+
+    /// <summary>
+    /// Detalles usa la GridView con columnas; las vistas de iconos quitan la GridView y muestran cada
+    /// resultado con su miniatura en una cuadricula virtualizada.
+    /// </summary>
+    void ApplyViewMode()
+    {
+        switch (_settings.ViewMode)
+        {
+            case ViewMode.MediumIcons:
+            case ViewMode.LargeIcons:
+                bool large = _settings.ViewMode == ViewMode.LargeIcons;
+                ResultsList.View = null;
+                ResultsList.ItemTemplate = (DataTemplate)FindResource(large ? "LargeIconsTemplate" : "MediumIconsTemplate");
+                ResultsList.ItemsPanel = (ItemsPanelTemplate)FindResource(large ? "LargeIconsPanel" : "MediumIconsPanel");
+                break;
+            default:
+                ResultsList.ItemTemplate = null;
+                ResultsList.ItemsPanel = _detailsPanel;
+                ResultsList.View = _detailsView;
+                break;
+        }
+    }
 
     async void SystemBox_Click(object sender, RoutedEventArgs e)
     {

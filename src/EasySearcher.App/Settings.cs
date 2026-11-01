@@ -4,6 +4,14 @@ using EasySearcher.Core;
 
 namespace EasySearcher.App;
 
+/// <summary>Vistas de la lista de resultados, en el mismo orden que el ComboBox de la ventana.</summary>
+enum ViewMode
+{
+    Details,
+    MediumIcons,
+    LargeIcons,
+}
+
 /// <summary>Preferencias del usuario en %APPDATA%\EasySearcher\settings.json.</summary>
 sealed class Settings
 {
@@ -18,6 +26,8 @@ sealed class Settings
 
     public SortColumn SortColumn { get; set; } = SortColumn.Name;
     public bool SortDescending { get; set; }
+
+    public ViewMode ViewMode { get; set; } = ViewMode.Details;
 
     public static Settings Load()
     {
