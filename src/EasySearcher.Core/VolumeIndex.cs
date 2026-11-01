@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using EasySearcher.Core.Interop;
 using Microsoft.Win32.SafeHandles;
 
 namespace EasySearcher.Core;
@@ -23,6 +24,11 @@ public sealed class VolumeIndex : IDisposable
     const byte Computed = 0x80;
     const FileAttributes ProtectedAttributes = FileAttributes.Hidden | FileAttributes.System;
 
+    // Valores especiales de la cache de tamano/fecha
+    const long Unknown = long.MinValue;          // aun no se ha leido
+    const long Unavailable = long.MinValue + 1;  // no se pudo leer (sin permisos, ya no existe...)
+    const long NoSize = -1;                      // carpetas
+
     readonly ReaderWriterLockSlim _lock = new();
     readonly SafeFileHandle _volume;
 
@@ -31,6 +37,8 @@ public sealed class VolumeIndex : IDisposable
     List<uint> _attributes = [];
     List<string> _names = [];
     List<byte> _flags = [];
+    List<long> _size = [];
+    List<long> _modified = []; // ticks UTC
     Dictionary<ulong, int> _byFrn = [];
     int _deletedCount;
     bool _flagsDirty;
@@ -118,6 +126,10 @@ public sealed class VolumeIndex : IDisposable
             _names = names;
             _byFrn = byFrn;
             _flags = new List<byte>(new byte[frn.Count]);
+            var unknown = new long[frn.Count];
+            Array.Fill(unknown, Unknown);
+            _size = new List<long>(unknown);
+            _modified = new List<long>(unknown);
             _deletedCount = 0;
             ComputeFlags();
             _journal = journal;
@@ -134,7 +146,8 @@ public sealed class VolumeIndex : IDisposable
     }
 
     /// <summary>
-    /// Aplica los cambios pendientes del USN Journal. Devuelve true si el indice cambio.
+    /// Aplica los cambios pendientes del USN Journal. Devuelve true si cambiaron nombres, ubicaciones o
+    /// atributos; los cambios solo de contenido descartan el tamano/fecha en cache pero devuelven false.
     /// No es seguro llamarlo desde varios hilos a la vez.
     /// </summary>
     public bool Update()
@@ -151,39 +164,50 @@ public sealed class VolumeIndex : IDisposable
         _nextUsn = nextUsn;
         if (records.Count == 0) return false;
 
+        bool structural = false;
         _lock.EnterWriteLock();
         try
         {
             foreach (var record in records)
-                Apply(record);
+                structural |= Apply(record);
             if (_flagsDirty) ComputeFlags();
-            Version++;
+            if (structural) Version++;
         }
         finally
         {
             _lock.ExitWriteLock();
         }
-        return true;
+        return structural;
     }
 
-    void Apply(in JournalRecord r)
+    /// <summary>Aplica un registro del journal. Devuelve true si cambio la estructura del indice.</summary>
+    bool Apply(in JournalRecord r)
     {
-        if (r.Frn == RootFrn) return;
+        if (r.Frn == RootFrn) return false;
         bool exists = _byFrn.TryGetValue(r.Frn, out int i);
+
+        if ((r.Reason & MftReader.StructuralReasons) == 0)
+        {
+            // Solo cambio el contenido: basta con olvidar el tamano y la fecha
+            if (exists)
+            {
+                _size[i] = Unknown;
+                _modified[i] = Unknown;
+            }
+            return false;
+        }
 
         if ((r.Reason & MftReader.ReasonFileDelete) != 0)
         {
-            if (exists && (_flags[i] & Deleted) == 0)
-            {
-                _flags[i] |= Deleted;
-                _deletedCount++;
-            }
-            return;
+            if (!exists || (_flags[i] & Deleted) != 0) return false;
+            _flags[i] |= Deleted;
+            _deletedCount++;
+            return true;
         }
 
         // El registro con el nombre viejo de un renombrado no aporta nada: le sigue el del nombre nuevo
         if ((r.Reason & (MftReader.ReasonRenameOldName | MftReader.ReasonRenameNewName)) == MftReader.ReasonRenameOldName)
-            return;
+            return false;
 
         if (exists)
         {
@@ -199,6 +223,8 @@ public sealed class VolumeIndex : IDisposable
             _parent[i] = r.Parent;
             _attributes[i] = r.Attributes;
             _names[i] = r.Name;
+            _size[i] = Unknown;
+            _modified[i] = Unknown;
         }
         else
         {
@@ -208,10 +234,13 @@ public sealed class VolumeIndex : IDisposable
             _attributes.Add(r.Attributes);
             _names.Add(r.Name);
             _flags.Add(0);
+            _size.Add(Unknown);
+            _modified.Add(Unknown);
             _byFrn[r.Frn] = i;
         }
 
         _flags[i] = ComputeEntryFlags(i);
+        return true;
     }
 
     /// <summary>Marcas de una entrada a partir de las de su padre.</summary>
@@ -297,6 +326,62 @@ public sealed class VolumeIndex : IDisposable
         try { return BuildPath(_parent[entry], null); }
         finally { _lock.ExitReadLock(); }
     }
+
+    /// <summary>
+    /// Tamano y fecha de modificacion. La MFT enumerada no los trae, asi que se piden al sistema la
+    /// primera vez y quedan en cache hasta que el journal indique que la entrada cambio.
+    /// </summary>
+    public FileDetails GetDetails(int entry)
+    {
+        string path;
+        int generation;
+        _lock.EnterReadLock();
+        try
+        {
+            if (_modified[entry] != Unknown) return ToDetails(_size[entry], _modified[entry]);
+            path = BuildPath(_parent[entry], _names[entry]);
+            generation = Generation;
+        }
+        finally
+        {
+            _lock.ExitReadLock();
+        }
+
+        // Fuera del lock: es una llamada al sistema de archivos
+        long size, modified;
+        if (NativeMethods.GetFileAttributesEx(@"\\?\" + path, 0, out var data))
+        {
+            size = (data.FileAttributes & (uint)FileAttributes.Directory) != 0
+                ? NoSize
+                : ((long)data.FileSizeHigh << 32) | data.FileSizeLow;
+            modified = DateTime.FromFileTimeUtc(data.LastWriteTime).Ticks;
+        }
+        else
+        {
+            size = Unavailable;
+            modified = Unavailable;
+        }
+
+        _lock.EnterReadLock();
+        try
+        {
+            // Escribir un elemento no cambia la estructura de las listas, basta el lock de lectura
+            if (Generation == generation && entry < _modified.Count)
+            {
+                _size[entry] = size;
+                _modified[entry] = modified;
+            }
+        }
+        finally
+        {
+            _lock.ExitReadLock();
+        }
+        return ToDetails(size, modified);
+    }
+
+    static FileDetails ToDetails(long size, long modified) => new(
+        size >= 0 ? size : null,
+        modified == Unavailable ? null : new DateTime(modified, DateTimeKind.Utc).ToLocalTime());
 
     string BuildPath(ulong p, string? leaf)
     {

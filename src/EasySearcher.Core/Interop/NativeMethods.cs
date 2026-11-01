@@ -26,6 +26,22 @@ internal static class NativeMethods
         string fileName, uint desiredAccess, uint shareMode, IntPtr securityAttributes,
         uint creationDisposition, uint flagsAndAttributes, IntPtr templateFile);
 
+    // Pack = 4: los FILETIME son dos DWORD, no estan alineados a 8 bytes
+    [StructLayout(LayoutKind.Sequential, Pack = 4)]
+    public struct WIN32_FILE_ATTRIBUTE_DATA
+    {
+        public uint FileAttributes;
+        public long CreationTime;
+        public long LastAccessTime;
+        public long LastWriteTime;
+        public uint FileSizeHigh;
+        public uint FileSizeLow;
+    }
+
+    [DllImport("kernel32.dll", EntryPoint = "GetFileAttributesExW", SetLastError = true, CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetFileAttributesEx(string fileName, int infoLevelId, out WIN32_FILE_ATTRIBUTE_DATA data);
+
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool DeviceIoControl(

@@ -21,13 +21,19 @@ internal static class MftReader
     // Los 16 bits altos del FRN son el numero de secuencia; para enlazar padre/hijo basta el indice
     public const ulong FrnMask = 0x0000_FFFF_FFFF_FFFF;
 
+    public const uint ReasonDataOverwrite = 0x0000_0001;
+    public const uint ReasonDataExtend = 0x0000_0002;
+    public const uint ReasonDataTruncation = 0x0000_0004;
     public const uint ReasonFileCreate = 0x0000_0100;
     public const uint ReasonFileDelete = 0x0000_0200;
     public const uint ReasonRenameOldName = 0x0000_1000;
     public const uint ReasonRenameNewName = 0x0000_2000;
     public const uint ReasonBasicInfoChange = 0x0000_8000;
 
-    const uint JournalReasonMask = ReasonFileCreate | ReasonFileDelete | ReasonRenameOldName | ReasonRenameNewName | ReasonBasicInfoChange;
+    /// <summary>Cambios que afectan nombre, ubicacion o atributos (no solo el contenido).</summary>
+    public const uint StructuralReasons = ReasonFileCreate | ReasonFileDelete | ReasonRenameOldName | ReasonRenameNewName | ReasonBasicInfoChange;
+
+    const uint JournalReasonMask = StructuralReasons | ReasonDataOverwrite | ReasonDataExtend | ReasonDataTruncation;
 
     const int EnumBufferSize = 1 << 20;
     const int JournalBufferSize = 1 << 16;

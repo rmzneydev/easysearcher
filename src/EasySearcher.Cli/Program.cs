@@ -11,6 +11,9 @@ string text = "";
 string? root = null;
 bool includeSystem = false;
 int watchSeconds = 0;
+var sort = SortColumn.None;
+bool descending = false;
+bool details = false;
 
 for (int i = 0; i < args.Length; i++)
 {
@@ -28,6 +31,22 @@ for (int i = 0; i < args.Length; i++)
         case "-w" or "--watch":
             watchSeconds = int.Parse(args[++i]);
             break;
+        case "-o" or "--sort":
+            // name, folder, size, date; con "-" al final en orden descendente (p. ej. size-)
+            var spec = args[++i].ToLowerInvariant();
+            descending = spec.EndsWith('-');
+            sort = spec.TrimEnd('-') switch
+            {
+                "name" => SortColumn.Name,
+                "folder" => SortColumn.Folder,
+                "size" => SortColumn.Size,
+                "date" => SortColumn.Modified,
+                _ => SortColumn.None,
+            };
+            break;
+        case "-l" or "--long":
+            details = true;
+            break;
         case "-k" or "--kind":
             kind = args[++i].ToLowerInvariant() switch
             {
@@ -40,7 +59,8 @@ for (int i = 0; i < args.Length; i++)
             max = int.Parse(args[++i]);
             break;
         case "-h" or "--help":
-            Console.WriteLine("Uso: easysearch [-d C,D] [-r carpeta] [-k all|files|dirs] [-s (incluir sistema)] [-n 50 (0 = todos)] [-w segundos (vigilar cambios)] [texto]");
+            Console.WriteLine("Uso: easysearch [-d C,D] [-r carpeta] [-k all|files|dirs] [-s (incluir sistema)] [-n 50 (0 = todos)]");
+            Console.WriteLine("                  [-o name|folder|size|date[-]] [-l (tamano y fecha)] [-w segundos (vigilar cambios)] [texto]");
             return 0;
         default:
             text = args[i];
@@ -78,6 +98,12 @@ var options = new SearchOptions { Kind = kind, Scope = scope, IncludeSystem = in
 sw.Restart();
 var results = index.Search(text, options);
 var searchMs = sw.Elapsed.TotalMilliseconds;
+if (sort != SortColumn.None)
+{
+    sw.Restart();
+    ResultSorter.Sort(results, sort, descending);
+    Console.Error.WriteLine($"Ordenado por {sort}{(descending ? " (desc)" : "")} en {sw.Elapsed.TotalMilliseconds:N0} ms");
+}
 
 foreach (var r in max > 0 ? results.Take(max) : results)
     Console.WriteLine(Format(r));
@@ -109,4 +135,10 @@ if (watchSeconds > 0)
 index.Dispose();
 return index.Volumes.Count > 0 ? 0 : 1;
 
-static string Format(SearchResult r) => r.IsDirectory ? $"[D] {r.FullPath}" : $"    {r.FullPath}";
+string Format(SearchResult r)
+{
+    var line = r.IsDirectory ? $"[D] {r.FullPath}" : $"    {r.FullPath}";
+    if (!details) return line;
+    var d = r.Details;
+    return $"{d.Size?.ToString() ?? "",12}  {d.Modified:yyyy-MM-dd HH:mm}  {line}";
+}

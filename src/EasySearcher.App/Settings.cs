@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.Json;
+using EasySearcher.Core;
 
 namespace EasySearcher.App;
 
@@ -14,6 +15,9 @@ sealed class Settings
 
     /// <summary>Mostrar archivos ocultos + sistema.</summary>
     public bool IncludeSystem { get; set; }
+
+    public SortColumn SortColumn { get; set; } = SortColumn.Name;
+    public bool SortDescending { get; set; }
 
     public static Settings Load()
     {

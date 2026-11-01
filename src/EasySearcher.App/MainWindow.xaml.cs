@@ -19,12 +19,23 @@ public partial class MainWindow : Window
     SearchScope? _scope;
     string? _appliedRoot;
     CancellationTokenSource? _searchCts;
+    readonly Dictionary<GridViewColumn, (SortColumn Sort, string Title)> _columns;
 
     public MainWindow()
     {
         InitializeComponent();
         RootBox.Text = _settings.RootPath ?? "";
         SystemBox.IsChecked = _settings.IncludeSystem;
+
+        _columns = new()
+        {
+            [NameColumn] = (SortColumn.Name, "Nombre"),
+            [FolderColumn] = (SortColumn.Folder, "Carpeta"),
+            [SizeColumn] = (SortColumn.Size, "Tamaño"),
+            [ModifiedColumn] = (SortColumn.Modified, "Modificado"),
+        };
+        UpdateSortHeaders();
+
         Loaded += async (_, _) => await BuildIndexAsync();
         Closed += (_, _) => _index?.Dispose();
     }
@@ -130,11 +141,17 @@ public partial class MainWindow : Window
             Scope = _scope,
             IncludeSystem = SystemBox.IsChecked == true,
         };
+        var (sortColumn, sortDescending) = (_settings.SortColumn, _settings.SortDescending);
 
         try
         {
             var sw = Stopwatch.StartNew();
-            var results = await Task.Run(() => index.Search(text, options, cts.Token), cts.Token);
+            var results = await Task.Run(() =>
+            {
+                var found = index.Search(text, options, cts.Token);
+                ResultSorter.Sort(found, sortColumn, sortDescending, cts.Token);
+                return found;
+            }, cts.Token);
             if (cts.IsCancellationRequested) return;
 
             if (!preserveView)
@@ -145,6 +162,39 @@ public partial class MainWindow : Window
         }
         catch (OperationCanceledException)
         {
+        }
+    }
+
+    async void ColumnHeader_Click(object sender, RoutedEventArgs e)
+    {
+        // El encabezado de relleno a la derecha de la ultima columna no tiene Column
+        if (e.OriginalSource is not GridViewColumnHeader { Column: { } column } || !_columns.TryGetValue(column, out var info))
+            return;
+
+        if (_settings.SortColumn == info.Sort)
+        {
+            _settings.SortDescending = !_settings.SortDescending;
+        }
+        else
+        {
+            _settings.SortColumn = info.Sort;
+            // Lo mas util primero: los mas grandes / los mas recientes
+            _settings.SortDescending = info.Sort is SortColumn.Size or SortColumn.Modified;
+        }
+        _settings.Save();
+        UpdateSortHeaders();
+
+        if (info.Sort is SortColumn.Size or SortColumn.Modified && ResultsList.Items.Count > 5000)
+            ResultText.Text = $"Ordenando {ResultsList.Items.Count:N0} resultados (leyendo tamaños y fechas del disco)...";
+        await SearchAsync();
+    }
+
+    void UpdateSortHeaders()
+    {
+        foreach (var (column, info) in _columns)
+        {
+            column.Header = info.Sort != _settings.SortColumn ? info.Title
+                : info.Title + (_settings.SortDescending ? "  ▼" : "  ▲");
         }
     }
 
