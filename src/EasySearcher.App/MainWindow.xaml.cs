@@ -1,20 +1,27 @@
 ﻿using System.Diagnostics;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 using EasySearcher.Core;
+using Microsoft.Win32;
 
 namespace EasySearcher.App;
 
 public partial class MainWindow : Window
 {
+    readonly Settings _settings = Settings.Load();
     FileIndex? _index;
+    SearchScope? _scope;
+    string? _appliedRoot;
     CancellationTokenSource? _searchCts;
 
     public MainWindow()
     {
         InitializeComponent();
+        RootBox.Text = _settings.RootPath ?? "";
         Loaded += async (_, _) => await BuildIndexAsync();
     }
 
@@ -33,7 +40,47 @@ public partial class MainWindow : Window
             status += "   |   No indexadas: " + string.Join("; ", index.Failures.Select(f => $"{f.Key}: {f.Value.Message}"));
         StatusText.Text = status;
 
+        await ApplyRootAsync();
+    }
+
+    /// <summary>Valida la carpeta de RootBox y la usa como raiz de las busquedas (vacio = todas las unidades).</summary>
+    async Task ApplyRootAsync()
+    {
+        var index = _index;
+        string root = RootBox.Text.Trim();
+        if (index is null || root == _appliedRoot) return;
+
+        if (root.Length == 0)
+        {
+            _scope = null;
+        }
+        else
+        {
+            try
+            {
+                _scope = await Task.Run(() => index.CreateScope(root));
+            }
+            catch (Exception ex) when (ex is IOException or ArgumentException or NotSupportedException)
+            {
+                RootBox.BorderBrush = Brushes.IndianRed;
+                ResultsList.ItemsSource = null;
+                ResultText.Text = ex.Message;
+                return;
+            }
+            RootBox.Text = _scope.RootPath;
+        }
+
+        RootBox.ClearValue(BorderBrushProperty);
+        _appliedRoot = RootBox.Text;
+        _settings.RootPath = _scope?.RootPath;
+        _settings.Save();
         await SearchAsync();
+    }
+
+    async Task SetRootAsync(string path)
+    {
+        RootBox.Text = path;
+        await ApplyRootAsync();
     }
 
     async Task SearchAsync()
@@ -42,25 +89,77 @@ public partial class MainWindow : Window
         if (index is null) return;
 
         _searchCts?.Cancel();
-        var cts = _searchCts = new CancellationTokenSource();
         string text = QueryBox.Text.Trim();
+        string where = _scope?.RootPath ?? "todas las unidades";
+        if (text.Length == 0)
+        {
+            ResultsList.ItemsSource = null;
+            ResultText.Text = $"Buscando en {where}";
+            return;
+        }
+
+        var cts = _searchCts = new CancellationTokenSource();
+        var scope = _scope;
         var kind = (EntryKind)KindBox.SelectedIndex;
 
         try
         {
             var sw = Stopwatch.StartNew();
-            var results = await Task.Run(() => index.Search(text, kind, cts.Token), cts.Token);
+            var results = await Task.Run(() => index.Search(text, kind, scope, cts.Token), cts.Token);
             if (cts.IsCancellationRequested) return;
 
             ResultsList.ItemsSource = results;
-            ResultText.Text = $"{results.Count:N0} resultados  ·  {sw.Elapsed.TotalMilliseconds:N0} ms";
+            ResultText.Text = $"{results.Count:N0} resultados en {where}  ·  {sw.Elapsed.TotalMilliseconds:N0} ms";
         }
         catch (OperationCanceledException)
         {
         }
     }
 
-    async void QueryBox_TextChanged(object sender, TextChangedEventArgs e) => await SearchAsync();
+    void RootBox_TextChanged(object sender, TextChangedEventArgs e) =>
+        RootPlaceholder.Visibility = RootBox.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+
+    async void RootBox_KeyDown(object sender, KeyEventArgs e)
+    {
+        switch (e.Key)
+        {
+            case Key.Enter:
+                e.Handled = true;
+                await ApplyRootAsync();
+                if (_appliedRoot == RootBox.Text) QueryBox.Focus();
+                break;
+            case Key.Escape:
+                e.Handled = true;
+                RootBox.Text = _appliedRoot ?? "";
+                RootBox.ClearValue(BorderBrushProperty);
+                QueryBox.Focus();
+                break;
+        }
+    }
+
+    async void RootBox_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e) => await ApplyRootAsync();
+
+    async void BrowseRoot_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFolderDialog { Title = "Carpeta raiz de las busquedas" };
+        if (Directory.Exists(RootBox.Text)) dialog.InitialDirectory = RootBox.Text;
+        if (dialog.ShowDialog(this) == true)
+            await SetRootAsync(dialog.FolderName);
+    }
+
+    async void ClearRoot_Click(object sender, RoutedEventArgs e) => await SetRootAsync("");
+
+    async void SearchHereMenu_Click(object sender, RoutedEventArgs e)
+    {
+        if (ResultsList.SelectedItem is SearchResult r)
+            await SetRootAsync(r.IsDirectory ? r.FullPath : r.DirectoryPath);
+    }
+
+    async void QueryBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        QueryPlaceholder.Visibility = QueryBox.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+        await SearchAsync();
+    }
 
     async void KindBox_SelectionChanged(object sender, SelectionChangedEventArgs e) => await SearchAsync();
 

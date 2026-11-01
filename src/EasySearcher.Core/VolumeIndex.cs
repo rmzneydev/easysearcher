@@ -89,11 +89,67 @@ public sealed class VolumeIndex
         return sb.ToString();
     }
 
-    internal void Search(string text, EntryKind kind, List<SearchResult> results, CancellationToken cancellationToken)
+    /// <summary>Busca una carpeta por su ruta relativa a la raiz del volumen (sin letra de unidad). Devuelve -1 si no existe.</summary>
+    internal int FindDirectory(string relativePath)
+    {
+        ulong current = RootFrn;
+        int entry = -1;
+        foreach (var part in relativePath.Split('\\', StringSplitOptions.RemoveEmptyEntries))
+        {
+            entry = -1;
+            for (int i = 0; i < _names.Length; i++)
+            {
+                if (_parent[i] == current && IsDirectory(i) && string.Equals(_names[i], part, StringComparison.OrdinalIgnoreCase))
+                {
+                    entry = i;
+                    break;
+                }
+            }
+            if (entry < 0) return -1;
+            current = _frn[entry];
+        }
+        return entry;
+    }
+
+    /// <summary>
+    /// Marca las entradas que estan dentro de la carpeta indicada (a cualquier profundidad).
+    /// Recorre cada cadena de padres una sola vez gracias a la memoizacion: O(n) en total.
+    /// </summary>
+    internal bool[] GetSubtreeMask(int rootEntry)
+    {
+        ulong rootFrn = _frn[rootEntry];
+        var state = new sbyte[_names.Length]; // 0 = sin calcular, 1 = dentro, -1 = fuera
+        var pending = new Stack<int>();
+
+        for (int i = 0; i < state.Length; i++)
+        {
+            if (state[i] != 0) continue;
+
+            int current = i;
+            sbyte result;
+            while (true)
+            {
+                pending.Push(current);
+                ulong p = _parent[current];
+                if (p == rootFrn) { result = 1; break; }
+                if (p == RootFrn || pending.Count > MaxDepth || !_byFrn.TryGetValue(p, out int j)) { result = -1; break; }
+                if (state[j] != 0) { result = state[j]; break; }
+                current = j;
+            }
+            while (pending.Count > 0) state[pending.Pop()] = result;
+        }
+
+        var mask = new bool[state.Length];
+        for (int i = 0; i < state.Length; i++) mask[i] = state[i] == 1;
+        return mask;
+    }
+
+    internal void Search(string text, EntryKind kind, bool[]? mask, List<SearchResult> results, CancellationToken cancellationToken)
     {
         for (int i = 0; i < _names.Length; i++)
         {
             if ((i & 0xFFFF) == 0) cancellationToken.ThrowIfCancellationRequested();
+            if (mask is not null && !mask[i]) continue;
             if (kind != EntryKind.All && IsDirectory(i) != (kind == EntryKind.Directories)) continue;
             if (text.Length > 0 && !_names[i].Contains(text, StringComparison.OrdinalIgnoreCase)) continue;
             results.Add(new SearchResult(this, i));

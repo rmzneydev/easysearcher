@@ -45,12 +45,43 @@ public sealed class FileIndex
         return new FileIndex(volumes.OfType<VolumeIndex>().ToArray(), failures);
     }
 
-    /// <summary>Busca por subcadena en el nombre, sin distinguir mayusculas. Texto vacio devuelve todo.</summary>
-    public List<SearchResult> Search(string text, EntryKind kind = EntryKind.All, CancellationToken cancellationToken = default)
+    /// <summary>Prepara una busqueda limitada a <paramref name="rootPath"/> y sus subcarpetas.</summary>
+    /// <exception cref="DirectoryNotFoundException">La unidad no esta indexada o la carpeta no existe en el indice.</exception>
+    public SearchScope CreateScope(string rootPath)
+    {
+        var full = Path.GetFullPath(rootPath.Trim());
+        if (full.Length < 3 || full[1] != ':')
+            throw new DirectoryNotFoundException($"Solo se admiten carpetas de unidades locales: {rootPath}");
+
+        var volume = Volumes.FirstOrDefault(v => v.Drive == char.ToUpperInvariant(full[0]))
+            ?? throw new DirectoryNotFoundException($"La unidad {char.ToUpperInvariant(full[0])}: no esta indexada.");
+
+        var relative = full[3..].TrimEnd('\\');
+        if (relative.Length == 0)
+            return new SearchScope($@"{volume.Drive}:\", volume, null);
+
+        int entry = volume.FindDirectory(relative);
+        if (entry < 0)
+            throw new DirectoryNotFoundException($"No existe la carpeta: {full}");
+
+        return new SearchScope(volume.GetFullPath(entry), volume, volume.GetSubtreeMask(entry));
+    }
+
+    /// <summary>
+    /// Busca por subcadena en el nombre, sin distinguir mayusculas. Texto vacio devuelve todo.
+    /// Con <paramref name="scope"/> solo busca dentro de esa carpeta.
+    /// </summary>
+    public List<SearchResult> Search(string text, EntryKind kind = EntryKind.All, SearchScope? scope = null,
+        CancellationToken cancellationToken = default)
     {
         var results = new List<SearchResult>();
+        if (scope is not null)
+        {
+            scope.Volume.Search(text, kind, scope.Mask, results, cancellationToken);
+            return results;
+        }
         foreach (var volume in Volumes)
-            volume.Search(text, kind, results, cancellationToken);
+            volume.Search(text, kind, null, results, cancellationToken);
         return results;
     }
 }

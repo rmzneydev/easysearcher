@@ -5,6 +5,27 @@
         WindowStartupLocation="CenterScreen"
         FocusManager.FocusedElement="{Binding ElementName=QueryBox}">
     <DockPanel>
+        <Grid DockPanel.Dock="Top" Margin="8,8,8,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="Buscar en:" VerticalAlignment="Center" Margin="0,0,8,0" />
+            <Grid Grid.Column="1">
+                <TextBox x:Name="RootBox" Padding="4,3" VerticalContentAlignment="Center"
+                         TextChanged="RootBox_TextChanged" KeyDown="RootBox_KeyDown"
+                         LostKeyboardFocus="RootBox_LostKeyboardFocus" />
+                <TextBlock x:Name="RootPlaceholder" Text="Todas las unidades" Foreground="Gray"
+                           Margin="7,0" VerticalAlignment="Center" IsHitTestVisible="False" />
+            </Grid>
+            <Button Grid.Column="2" Content="..." Width="32" Margin="6,0,0,0"
+                    ToolTip="Elegir carpeta raiz" Click="BrowseRoot_Click" />
+            <Button Grid.Column="3" Content="&#xE711;" FontFamily="Segoe MDL2 Assets" Width="32" Margin="6,0,0,0"
+                    ToolTip="Buscar en todas las unidades" Click="ClearRoot_Click" />
+        </Grid>
+
         <Grid DockPanel.Dock="Top" Margin="8">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition />
@@ -12,6 +33,8 @@
             </Grid.ColumnDefinitions>
             <TextBox x:Name="QueryBox" FontSize="15" Padding="6,4" VerticalContentAlignment="Center"
                      TextChanged="QueryBox_TextChanged" PreviewKeyDown="QueryBox_PreviewKeyDown" />
+            <TextBlock x:Name="QueryPlaceholder" Text="Escribe para buscar..." Foreground="Gray" FontSize="15"
+                       Margin="9,0" VerticalAlignment="Center" IsHitTestVisible="False" />
             <ComboBox x:Name="KindBox" Grid.Column="1" Width="110" Margin="8,0,0,0" SelectedIndex="0"
                       VerticalContentAlignment="Center" SelectionChanged="KindBox_SelectionChanged">
                 <ComboBoxItem Content="Todo" />
@@ -42,6 +65,7 @@
                 <ContextMenu>
                     <MenuItem Header="_Abrir" InputGestureText="Enter" Click="OpenMenu_Click" />
                     <MenuItem Header="Abrir _carpeta contenedora" InputGestureText="Ctrl+Enter" Click="ShowInFolderMenu_Click" />
+                    <MenuItem Header="_Buscar solo aqui" ToolTip="Usar esta carpeta como raiz de las busquedas" Click="SearchHereMenu_Click" />
                     <Separator />
                     <MenuItem Header="Copiar _ruta completa" InputGestureText="Ctrl+C" Click="CopyPathMenu_Click" />
                     <MenuItem Header="Copiar _nombre" Click="CopyNameMenu_Click" />

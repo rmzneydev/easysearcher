@@ -1,13 +1,14 @@
 ﻿using System.Diagnostics;
 using EasySearcher.Core;
 
-// Uso: easysearch [-d C,D] [-k all|files|dirs] [-n 50] [texto]
+// Uso: easysearch [-d C,D] [-r carpeta] [-k all|files|dirs] [-n 50] [texto]
 // Requiere ejecutarse como administrador.
 
 var drives = new List<char>();
 var kind = EntryKind.All;
 int max = 50;
 string text = "";
+string? root = null;
 
 for (int i = 0; i < args.Length; i++)
 {
@@ -15,6 +16,9 @@ for (int i = 0; i < args.Length; i++)
     {
         case "-d" or "--drives":
             drives.AddRange(args[++i].Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(s => s[0]));
+            break;
+        case "-r" or "--root":
+            root = args[++i];
             break;
         case "-k" or "--kind":
             kind = args[++i].ToLowerInvariant() switch
@@ -28,7 +32,7 @@ for (int i = 0; i < args.Length; i++)
             max = int.Parse(args[++i]);
             break;
         case "-h" or "--help":
-            Console.WriteLine("Uso: easysearch [-d C,D] [-k all|files|dirs] [-n 50 (0 = todos)] [texto]");
+            Console.WriteLine("Uso: easysearch [-d C,D] [-r carpeta] [-k all|files|dirs] [-n 50 (0 = todos)] [texto]");
             return 0;
         default:
             text = args[i];
@@ -46,8 +50,24 @@ foreach (var v in index.Volumes)
 foreach (var (drive, error) in index.Failures)
     Console.Error.WriteLine($"  {drive}: ERROR {error.Message}");
 
+SearchScope? scope = null;
+if (root is not null)
+{
+    sw.Restart();
+    try
+    {
+        scope = index.CreateScope(root);
+    }
+    catch (DirectoryNotFoundException ex)
+    {
+        Console.Error.WriteLine($"ERROR: {ex.Message}");
+        return 1;
+    }
+    Console.Error.WriteLine($"Raiz: {scope.RootPath} ({sw.Elapsed.TotalMilliseconds:N0} ms)");
+}
+
 sw.Restart();
-var results = index.Search(text, kind);
+var results = index.Search(text, kind, scope);
 var searchMs = sw.Elapsed.TotalMilliseconds;
 
 foreach (var r in max > 0 ? results.Take(max) : results)
