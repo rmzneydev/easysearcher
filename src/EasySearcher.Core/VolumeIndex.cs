@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text;
 using EasySearcher.Core.Interop;
 using Microsoft.Win32.SafeHandles;
@@ -8,45 +9,42 @@ namespace EasySearcher.Core;
 /// <summary>
 /// Indice en memoria de todas las entradas (archivos y carpetas) de un volumen NTFS, que se mantiene
 /// al dia leyendo el USN Journal con <see cref="Update"/>.
-/// Se guarda como listas paralelas para ocupar poca memoria. Las entradas borradas solo se marcan,
-/// asi los indices que ya tiene la interfaz siguen siendo validos.
+/// Las listas paralelas se indexan por el numero de registro de la MFT (el FRN sin numero de secuencia):
+/// asi no hace falta un diccionario para encontrar al padre, y los indices que ya tiene la interfaz
+/// siguen siendo validos aunque se borren entradas.
 /// </summary>
 public sealed class VolumeIndex : IDisposable
 {
-    const ulong RootFrn = 5;
+    const uint RootFrn = 5;
     const int MaxDepth = 512;
 
     // Marcas por entrada
     const byte Orphan = 0x1;      // su cadena de padres no llega a la raiz: metarchivos de NTFS ($Extend, ...)
     const byte SystemTree = 0x2;  // ella o alguna carpeta que la contiene es oculta + sistema
-    const byte Deleted = 0x4;
+    const byte Empty = 0x4;       // registro de la MFT sin entrada (libre o borrada)
     const byte Inherited = Orphan | SystemTree;
     const byte Computed = 0x80;
     const FileAttributes ProtectedAttributes = FileAttributes.Hidden | FileAttributes.System;
 
     // Valores especiales de la cache de tamano/fecha
-    const long Unknown = long.MinValue;          // aun no se ha leido
     const long Unavailable = long.MinValue + 1;  // no se pudo leer (sin permisos, ya no existe...)
     const long NoSize = -1;                      // carpetas
 
     readonly ReaderWriterLockSlim _lock = new();
     readonly SafeFileHandle _volume;
 
-    List<ulong> _frn = [];
-    List<ulong> _parent = [];
+    List<uint> _parent = [];
     List<uint> _attributes = [];
     List<string> _names = [];
     List<byte> _flags = [];
-    List<long> _size = [];
-    List<long> _modified = []; // ticks UTC
-    Dictionary<ulong, int> _byFrn = [];
-    int _deletedCount;
+    DetailsCache _details = new();
+    int _count;
     bool _flagsDirty;
 
     JournalInfo? _journal;
     long _nextUsn;
 
-    /// <summary>Cambia cada vez que se vuelve a enumerar la MFT (los indices de entrada dejan de valer).</summary>
+    /// <summary>Cambia cada vez que se vuelve a enumerar la MFT.</summary>
     internal int Generation { get; private set; }
 
     /// <summary>Cambia con cada lote de cambios aplicado.</summary>
@@ -63,7 +61,7 @@ public sealed class VolumeIndex : IDisposable
         get
         {
             _lock.EnterReadLock();
-            try { return _names.Count - _deletedCount; }
+            try { return _count; }
             finally { _lock.ExitReadLock(); }
         }
     }
@@ -99,38 +97,57 @@ public sealed class VolumeIndex : IDisposable
         // Se toma la posicion del journal antes de enumerar para no perder cambios ocurridos mientras tanto
         var journal = MftReader.QueryJournal(_volume, Drive);
 
-        var frn = new List<ulong>(1 << 16);
-        var parent = new List<ulong>(1 << 16);
+        var parent = new List<uint>(1 << 16);
         var attributes = new List<uint>(1 << 16);
         var names = new List<string>(1 << 16);
+        var flags = new List<byte>(1 << 16);
+        int count = 0;
 
-        MftReader.Enumerate(_volume, Drive, (f, p, a, _, name) =>
+        // Muchos nombres se repiten (index.js, LICENSE, ...): se guarda un solo string por nombre distinto
+        var pool = new HashSet<string>(StringComparer.Ordinal);
+        var lookup = pool.GetAlternateLookup<ReadOnlySpan<char>>();
+
+        MftReader.Enumerate(_volume, Drive, (frn, p, a, _, name) =>
         {
-            if (f == RootFrn) return;
-            frn.Add(f);
-            parent.Add(p);
-            attributes.Add(a);
-            names.Add(new string(name));
+            if (frn == RootFrn || frn > int.MaxValue) return;
+            int slot = (int)frn;
+            while (names.Count <= slot)
+            {
+                parent.Add(0);
+                attributes.Add(0);
+                names.Add("");
+                flags.Add(Empty);
+            }
+
+            if (!lookup.TryGetValue(name, out var pooled))
+            {
+                pooled = new string(name);
+                pool.Add(pooled);
+            }
+
+            if ((flags[slot] & Empty) != 0) count++;
+            parent[slot] = p > uint.MaxValue ? uint.MaxValue : (uint)p;
+            attributes[slot] = a;
+            names[slot] = pooled;
+            flags[slot] = 0;
         });
 
-        var byFrn = new Dictionary<ulong, int>(frn.Count);
-        for (int i = 0; i < frn.Count; i++)
-            byFrn[frn[i]] = i;
+        parent.TrimExcess();
+        attributes.TrimExcess();
+        names.TrimExcess();
+        flags.TrimExcess();
+        var details = new DetailsCache();
+        details.EnsureCapacity(names.Count);
 
         _lock.EnterWriteLock();
         try
         {
-            _frn = frn;
             _parent = parent;
             _attributes = attributes;
             _names = names;
-            _byFrn = byFrn;
-            _flags = new List<byte>(new byte[frn.Count]);
-            var unknown = new long[frn.Count];
-            Array.Fill(unknown, Unknown);
-            _size = new List<long>(unknown);
-            _modified = new List<long>(unknown);
-            _deletedCount = 0;
+            _flags = flags;
+            _details = details;
+            _count = count;
             ComputeFlags();
             _journal = journal;
             _nextUsn = journal?.NextUsn ?? 0;
@@ -183,25 +200,24 @@ public sealed class VolumeIndex : IDisposable
     /// <summary>Aplica un registro del journal. Devuelve true si cambio la estructura del indice.</summary>
     bool Apply(in JournalRecord r)
     {
-        if (r.Frn == RootFrn) return false;
-        bool exists = _byFrn.TryGetValue(r.Frn, out int i);
+        if (r.Frn == RootFrn || r.Frn > int.MaxValue) return false;
+        int i = (int)r.Frn;
+        bool exists = Exists(i);
 
         if ((r.Reason & MftReader.StructuralReasons) == 0)
         {
             // Solo cambio el contenido: basta con olvidar el tamano y la fecha
-            if (exists)
-            {
-                _size[i] = Unknown;
-                _modified[i] = Unknown;
-            }
+            if (exists) _details.Invalidate(i);
             return false;
         }
 
         if ((r.Reason & MftReader.ReasonFileDelete) != 0)
         {
-            if (!exists || (_flags[i] & Deleted) != 0) return false;
-            _flags[i] |= Deleted;
-            _deletedCount++;
+            if (!exists) return false;
+            // El nombre se conserva para que los resultados ya mostrados no queden en blanco
+            _flags[i] |= Empty;
+            _count--;
+            _details.Invalidate(i);
             return true;
         }
 
@@ -209,47 +225,57 @@ public sealed class VolumeIndex : IDisposable
         if ((r.Reason & (MftReader.ReasonRenameOldName | MftReader.ReasonRenameNewName)) == MftReader.ReasonRenameOldName)
             return false;
 
+        uint parent = r.Parent > uint.MaxValue ? uint.MaxValue : (uint)r.Parent;
         if (exists)
         {
-            bool wasDeleted = (_flags[i] & Deleted) != 0;
-            if (wasDeleted) _deletedCount--;
-
             // Si una carpeta se mueve o cambia de oculta/sistema, cambian las marcas de todo su contenido
             bool isDirectory = (r.Attributes & (uint)FileAttributes.Directory) != 0;
-            if (isDirectory && (wasDeleted || _parent[i] != r.Parent ||
+            if (isDirectory && (_parent[i] != parent ||
                                 ((_attributes[i] ^ r.Attributes) & (uint)ProtectedAttributes) != 0))
                 _flagsDirty = true;
-
-            _parent[i] = r.Parent;
-            _attributes[i] = r.Attributes;
-            _names[i] = r.Name;
-            _size[i] = Unknown;
-            _modified[i] = Unknown;
         }
         else
         {
-            i = _names.Count;
-            _frn.Add(r.Frn);
-            _parent.Add(r.Parent);
-            _attributes.Add(r.Attributes);
-            _names.Add(r.Name);
-            _flags.Add(0);
-            _size.Add(Unknown);
-            _modified.Add(Unknown);
-            _byFrn[r.Frn] = i;
+            EnsureSlot(i);
+            _count++;
         }
 
+        _parent[i] = parent;
+        _attributes[i] = r.Attributes;
+        _names[i] = r.Name;
+        _details.Invalidate(i);
         _flags[i] = ComputeEntryFlags(i);
         return true;
+    }
+
+    void EnsureSlot(int slot)
+    {
+        while (_names.Count <= slot)
+        {
+            _parent.Add(0);
+            _attributes.Add(0);
+            _names.Add("");
+            _flags.Add(Empty);
+        }
+        _details.EnsureCapacity(_names.Count);
+    }
+
+    bool Exists(int entry) => entry < _flags.Count && (_flags[entry] & Empty) == 0;
+
+    /// <summary>Indice del padre si existe en el indice (la raiz del volumen no cuenta).</summary>
+    bool TryGetParent(uint parent, out int entry)
+    {
+        entry = (int)parent;
+        return parent < (uint)_flags.Count && (_flags[entry] & Empty) == 0;
     }
 
     /// <summary>Marcas de una entrada a partir de las de su padre.</summary>
     byte ComputeEntryFlags(int entry)
     {
         byte flags;
-        ulong p = _parent[entry];
+        uint p = _parent[entry];
         if (p == RootFrn) flags = 0;
-        else if (_byFrn.TryGetValue(p, out int j) && (_flags[j] & Deleted) == 0) flags = (byte)(_flags[j] & Inherited);
+        else if (TryGetParent(p, out int j)) flags = (byte)(_flags[j] & Inherited);
         else flags = Orphan;
 
         if ((_attributes[entry] & (uint)ProtectedAttributes) == (uint)ProtectedAttributes) flags |= SystemTree;
@@ -264,20 +290,16 @@ public sealed class VolumeIndex : IDisposable
 
         for (int i = 0; i < state.Length; i++)
         {
-            if (state[i] != 0) continue;
+            if (state[i] != 0 || (_flags[i] & Empty) != 0) continue;
 
             int current = i;
             byte inherited;
             while (true)
             {
                 pending.Push(current);
-                ulong p = _parent[current];
+                uint p = _parent[current];
                 if (p == RootFrn) { inherited = 0; break; }
-                if (pending.Count > MaxDepth || !_byFrn.TryGetValue(p, out int j) || (_flags[j] & Deleted) != 0)
-                {
-                    inherited = Orphan;
-                    break;
-                }
+                if (pending.Count > MaxDepth || !TryGetParent(p, out int j)) { inherited = Orphan; break; }
                 if (state[j] != 0) { inherited = (byte)(state[j] & Inherited); break; }
                 current = j;
             }
@@ -292,7 +314,7 @@ public sealed class VolumeIndex : IDisposable
         }
 
         for (int i = 0; i < state.Length; i++)
-            _flags[i] = (byte)((_flags[i] & Deleted) | (state[i] & Inherited));
+            _flags[i] = (byte)((_flags[i] & Empty) | (state[i] & Inherited));
         _flagsDirty = false;
     }
 
@@ -338,7 +360,8 @@ public sealed class VolumeIndex : IDisposable
         _lock.EnterReadLock();
         try
         {
-            if (_modified[entry] != Unknown) return ToDetails(_size[entry], _modified[entry]);
+            if (_details.TryGet(entry, out long cachedSize, out long cachedModified))
+                return ToDetails(cachedSize, cachedModified);
             path = BuildPath(_parent[entry], _names[entry]);
             generation = Generation;
         }
@@ -365,12 +388,8 @@ public sealed class VolumeIndex : IDisposable
         _lock.EnterReadLock();
         try
         {
-            // Escribir un elemento no cambia la estructura de las listas, basta el lock de lectura
-            if (Generation == generation && entry < _modified.Count)
-            {
-                _size[entry] = size;
-                _modified[entry] = modified;
-            }
+            if (Generation == generation && entry < _names.Count)
+                _details.Set(entry, size, modified);
         }
         finally
         {
@@ -383,13 +402,13 @@ public sealed class VolumeIndex : IDisposable
         size >= 0 ? size : null,
         modified == Unavailable ? null : new DateTime(modified, DateTimeKind.Utc).ToLocalTime());
 
-    string BuildPath(ulong p, string? leaf)
+    string BuildPath(uint p, string? leaf)
     {
         var chain = new Stack<string>();
         if (leaf is not null) chain.Push(leaf);
         for (int depth = 0; p != RootFrn && depth < MaxDepth; depth++)
         {
-            if (!_byFrn.TryGetValue(p, out int j))
+            if (!TryGetParent(p, out int j))
             {
                 chain.Push("?");
                 break;
@@ -432,14 +451,14 @@ public sealed class VolumeIndex : IDisposable
     /// <summary>Busca una carpeta por su ruta relativa a la raiz del volumen. Devuelve -1 si no existe.</summary>
     int FindDirectory(string relativePath)
     {
-        ulong current = RootFrn;
+        uint current = RootFrn;
         int entry = -1;
         foreach (var part in relativePath.Split('\\', StringSplitOptions.RemoveEmptyEntries))
         {
             entry = -1;
             for (int i = 0; i < _names.Count; i++)
             {
-                if (_parent[i] == current && IsDirectoryCore(i) && (_flags[i] & Deleted) == 0 &&
+                if (_parent[i] == current && (_flags[i] & Empty) == 0 && IsDirectoryCore(i) &&
                     string.Equals(_names[i], part, StringComparison.OrdinalIgnoreCase))
                 {
                     entry = i;
@@ -447,7 +466,7 @@ public sealed class VolumeIndex : IDisposable
                 }
             }
             if (entry < 0) return -1;
-            current = _frn[entry];
+            current = (uint)entry;
         }
         return entry;
     }
@@ -458,22 +477,27 @@ public sealed class VolumeIndex : IDisposable
     /// </summary>
     bool[] GetSubtreeMask(int rootEntry)
     {
-        ulong rootFrn = _frn[rootEntry];
+        uint rootFrn = (uint)rootEntry;
         var state = new sbyte[_names.Count]; // 0 = sin calcular, 1 = dentro, -1 = fuera
         var pending = new Stack<int>();
 
         for (int i = 0; i < state.Length; i++)
         {
             if (state[i] != 0) continue;
+            if ((_flags[i] & Empty) != 0)
+            {
+                state[i] = -1;
+                continue;
+            }
 
             int current = i;
             sbyte result;
             while (true)
             {
                 pending.Push(current);
-                ulong p = _parent[current];
+                uint p = _parent[current];
                 if (p == rootFrn) { result = 1; break; }
-                if (p == RootFrn || pending.Count > MaxDepth || !_byFrn.TryGetValue(p, out int j)) { result = -1; break; }
+                if (p == RootFrn || pending.Count > MaxDepth || !TryGetParent(p, out int j)) { result = -1; break; }
                 if (state[j] != 0) { result = state[j]; break; }
                 current = j;
             }
@@ -492,9 +516,9 @@ public sealed class VolumeIndex : IDisposable
         if (cache is not null && cache.Generation == Generation && cache.Version == Version)
             return cache;
 
-        // Tras volver a enumerar la MFT los indices cambian: hay que volver a ubicar la carpeta
+        // Tras volver a enumerar la MFT hay que volver a ubicar la carpeta
         int entry = cache is not null && cache.Generation == Generation ? cache.RootEntry : FindDirectory(scope.RelativePath);
-        var mask = entry >= 0 && (_flags[entry] & Deleted) == 0 ? GetSubtreeMask(entry) : new bool[_names.Count];
+        var mask = entry >= 0 && Exists(entry) ? GetSubtreeMask(entry) : new bool[_names.Count];
         cache = new SearchScope.MaskCache(Generation, Version, entry, mask);
         scope.Cache = cache;
         return cache;
@@ -512,17 +536,25 @@ public sealed class VolumeIndex : IDisposable
                 var cache = GetScopeCache(scope);
                 mask = cache.Mask;
                 // Si la raiz ya es de sistema, su contenido se muestra igual
-                if (cache.RootEntry >= 0 && (_flags[cache.RootEntry] & SystemTree) != 0) includeSystem = true;
+                if (cache.RootEntry >= 0 && Exists(cache.RootEntry) && (_flags[cache.RootEntry] & SystemTree) != 0)
+                    includeSystem = true;
             }
 
-            byte hidden = includeSystem ? (byte)(Deleted | Orphan) : (byte)(Deleted | Orphan | SystemTree);
-            for (int i = 0; i < _names.Count; i++)
+            // Spans en lugar del indexador de List: este es el bucle caliente de la busqueda
+            var names = CollectionsMarshal.AsSpan(_names);
+            var flags = CollectionsMarshal.AsSpan(_flags);
+            var attributes = CollectionsMarshal.AsSpan(_attributes);
+            byte hidden = includeSystem ? (byte)(Empty | Orphan) : (byte)(Empty | Orphan | SystemTree);
+            bool filterKind = kind != EntryKind.All;
+            bool wantDirectories = kind == EntryKind.Directories;
+
+            for (int i = 0; i < names.Length; i++)
             {
                 if ((i & 0xFFFF) == 0) cancellationToken.ThrowIfCancellationRequested();
-                if ((_flags[i] & hidden) != 0) continue;
+                if ((flags[i] & hidden) != 0) continue;
                 if (mask is not null && !mask[i]) continue;
-                if (kind != EntryKind.All && IsDirectoryCore(i) != (kind == EntryKind.Directories)) continue;
-                if (text.Length > 0 && !_names[i].Contains(text, StringComparison.OrdinalIgnoreCase)) continue;
+                if (filterKind && ((attributes[i] & (uint)FileAttributes.Directory) != 0) != wantDirectories) continue;
+                if (text.Length > 0 && !names[i].Contains(text, StringComparison.OrdinalIgnoreCase)) continue;
                 results.Add(new SearchResult(this, i));
             }
         }

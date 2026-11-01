@@ -14,6 +14,7 @@ int watchSeconds = 0;
 var sort = SortColumn.None;
 bool descending = false;
 bool details = false;
+bool memory = false;
 
 for (int i = 0; i < args.Length; i++)
 {
@@ -47,6 +48,9 @@ for (int i = 0; i < args.Length; i++)
         case "-l" or "--long":
             details = true;
             break;
+        case "--mem":
+            memory = true;
+            break;
         case "-k" or "--kind":
             kind = args[++i].ToLowerInvariant() switch
             {
@@ -77,6 +81,21 @@ foreach (var v in index.Volumes)
     Console.Error.WriteLine($"  {v.Drive}: {v.Count,10:N0} entradas  {v.BuildTime.TotalMilliseconds,7:N0} ms");
 foreach (var (drive, error) in index.Failures)
     Console.Error.WriteLine($"  {drive}: ERROR {error.Message}");
+
+if (memory)
+{
+    GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+    using var process = Process.GetCurrentProcess();
+    Console.Error.WriteLine($"Memoria: gestionada {GC.GetTotalMemory(false) / 1048576.0:N1} MB, " +
+                            $"privada del proceso {process.PrivateMemorySize64 / 1048576.0:N1} MB");
+
+    var all = index.Search("", new SearchOptions { IncludeSystem = true });
+    var names = all.Select(r => r.Name).ToList();
+    long chars = names.Sum(n => (long)n.Length);
+    int unique = names.Distinct().Count();
+    Console.Error.WriteLine($"Nombres: {names.Count:N0} ({unique:N0} distintos), {chars:N0} caracteres, " +
+                            $"promedio {chars / (double)names.Count:N1}");
+}
 
 SearchScope? scope = null;
 if (root is not null)

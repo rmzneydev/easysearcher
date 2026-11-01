@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.ComponentModel;
+using System.Runtime;
 
 namespace EasySearcher.Core;
 
@@ -46,6 +47,11 @@ public sealed class FileIndex : IDisposable
                 failures[letters[i]] = ex;
             }
         });
+
+        // La construccion deja mucha memoria temporal (buffers, listas que crecieron, nombres repetidos):
+        // una compactacion completa la devuelve al sistema de una vez
+        GCSettings.LargeObjectHeapCompactionMode = GCLargeObjectHeapCompactionMode.CompactOnce;
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
 
         return new FileIndex(volumes.OfType<VolumeIndex>().ToArray(), failures);
     }
