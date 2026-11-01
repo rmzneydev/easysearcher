@@ -62,7 +62,7 @@ public sealed class SearchEngine : ISearchService
         if (index is null)
         {
             return new EngineStatus(false, 0, 0, [], [], _buildError is null ? [] : [_buildError],
-                _buildClock.Elapsed.TotalSeconds);
+                _buildClock.Elapsed.TotalSeconds, Protocol.Version);
         }
 
         return new EngineStatus(
@@ -72,7 +72,8 @@ public sealed class SearchEngine : ISearchService
             index.Volumes.Select(v => v.Drive.ToString()).ToArray(),
             index.Volumes.Where(v => !v.IsLive).Select(v => v.Drive.ToString()).ToArray(),
             index.Failures.Select(f => $"{f.Key}: {f.Value.Message}").ToArray(),
-            _buildSeconds);
+            _buildSeconds,
+            Protocol.Version);
     }
 
     public string ResolveRoot(string root) => GetScope(RequireIndex(), root).RootPath;
@@ -88,6 +89,8 @@ public sealed class SearchEngine : ISearchService
             Kind = request.Kind,
             Scope = scope,
             IncludeSystem = request.IncludeSystem,
+            ModifiedFrom = request.ModifiedFrom,
+            ModifiedTo = request.ModifiedTo,
         });
         ResultSorter.Sort(results, request.Sort, request.Descending);
         double elapsed = sw.Elapsed.TotalMilliseconds;

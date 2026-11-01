@@ -12,4 +12,13 @@ public sealed record SearchOptions
     /// Se activa solo si la carpeta raiz ya es de sistema.
     /// </summary>
     public bool IncludeSystem { get; init; }
+
+    /// <summary>
+    /// Solo entradas modificadas desde esta fecha (incluida), en hora local. La fecha no esta en el indice:
+    /// se consulta al disco para cada coincidencia del texto (con cache).
+    /// </summary>
+    public DateTime? ModifiedFrom { get; init; }
+
+    /// <summary>Solo entradas modificadas antes de esta fecha (excluida), en hora local.</summary>
+    public DateTime? ModifiedTo { get; init; }
 }

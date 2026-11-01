@@ -35,8 +35,24 @@
                 <ColumnDefinition />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
-            <CheckBox x:Name="SystemBox" Grid.Column="2" Content="Sistema" Margin="10,0,0,0" VerticalAlignment="Center"
+            <!-- Mismo orden que el enum DatePreset -->
+            <ComboBox x:Name="DateBox" Grid.Column="2" Width="160" Margin="8,0,0,0" SelectedIndex="0"
+                      VerticalContentAlignment="Center" ToolTip="Fecha de modificacion"
+                      SelectionChanged="DateBox_SelectionChanged">
+                <ComboBoxItem Content="Cualquier fecha" />
+                <ComboBoxItem Content="Hoy" />
+                <ComboBoxItem Content="Ayer" />
+                <ComboBoxItem Content="Esta semana" />
+                <ComboBoxItem Content="La semana pasada" />
+                <ComboBoxItem Content="Este mes" />
+                <ComboBoxItem Content="El mes pasado" />
+                <ComboBoxItem Content="Este año" />
+                <ComboBoxItem Content="El año pasado" />
+                <ComboBoxItem Content="Rango personalizado..." />
+            </ComboBox>
+            <CheckBox x:Name="SystemBox" Grid.Column="3" Content="Sistema" Margin="10,0,0,0" VerticalAlignment="Center"
                       ToolTip="Incluir archivos ocultos de sistema (System Volume Information, $Recycle.Bin, desktop.ini...)"
                       Click="SystemBox_Click" />
             <TextBox x:Name="QueryBox" FontSize="15" Padding="6,4" VerticalContentAlignment="Center"
@@ -50,6 +66,15 @@
                 <ComboBoxItem Content="Carpetas" />
             </ComboBox>
         </Grid>
+
+        <!-- Visible solo con "Rango personalizado..." -->
+        <StackPanel x:Name="CustomDatePanel" DockPanel.Dock="Top" Orientation="Horizontal" Margin="8,0,8,8"
+                    HorizontalAlignment="Right" Visibility="Collapsed">
+            <TextBlock Text="Modificado desde" VerticalAlignment="Center" Margin="0,0,6,0" />
+            <DatePicker x:Name="FromDate" Width="130" SelectedDateChanged="CustomDate_Changed" />
+            <TextBlock Text="hasta" VerticalAlignment="Center" Margin="10,0,6,0" />
+            <DatePicker x:Name="ToDate" Width="130" SelectedDateChanged="CustomDate_Changed" />
+        </StackPanel>
 
         <StatusBar DockPanel.Dock="Bottom">
             <StatusBarItem>

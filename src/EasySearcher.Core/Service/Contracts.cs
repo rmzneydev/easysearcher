@@ -23,8 +23,19 @@ public interface ISearchService : IDisposable
 
 public sealed class SearchServiceException(string message) : Exception(message);
 
+public static class Protocol
+{
+    /// <summary>
+    /// Version de lo que entiende el motor. Un servicio instalado mas viejo ignora los campos nuevos sin
+    /// avisar, asi que la app la compara antes de usarlos.
+    /// 1 = 0.1.0; 2 = filtro por fecha de modificacion.
+    /// </summary>
+    public const int Version = 2;
+}
+
 /// <param name="Ready">False mientras se construye el indice.</param>
 /// <param name="ChangeCounter">Aumenta cada vez que el indice cambia por actividad en disco.</param>
+/// <param name="ProtocolVersion">Ver <see cref="Protocol.Version"/>; un servicio 0.1.0 no lo envia (queda en 1).</param>
 public sealed record EngineStatus(
     bool Ready,
     int Entries,
@@ -32,10 +43,13 @@ public sealed record EngineStatus(
     string[] Drives,
     string[] NotLive,
     string[] Failures,
-    double BuildSeconds);
+    double BuildSeconds,
+    int ProtocolVersion = 1);
 
 /// <param name="Root">Carpeta raiz; null o vacia = todas las unidades.</param>
 /// <param name="PreviousSearchId">Si se indica y el resultado es identico, se reutiliza esa busqueda.</param>
+/// <param name="ModifiedFrom">Modificados desde (incluido), hora local. Protocolo 2.</param>
+/// <param name="ModifiedTo">Modificados antes de (excluido), hora local. Protocolo 2.</param>
 public sealed record SearchRequest(
     string Text,
     EntryKind Kind,
@@ -43,7 +57,9 @@ public sealed record SearchRequest(
     bool IncludeSystem,
     SortColumn Sort,
     bool Descending,
-    int PreviousSearchId = 0);
+    int PreviousSearchId = 0,
+    DateTime? ModifiedFrom = null,
+    DateTime? ModifiedTo = null);
 
 /// <param name="Unchanged">True si el resultado es identico al de PreviousSearchId.</param>
 public sealed record SearchResponse(int SearchId, int Total, string? Root, bool Unchanged, double ElapsedMs);

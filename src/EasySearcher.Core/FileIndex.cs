@@ -122,7 +122,27 @@ public sealed class FileIndex : IDisposable
             if (scope is null || scope.Volume == volume)
                 volume.Search(text, options.Kind, scope, options.IncludeSystem, results, cancellationToken);
         }
+
+        if (options.ModifiedFrom is not null || options.ModifiedTo is not null)
+            results = FilterByModified(results, options.ModifiedFrom, options.ModifiedTo, cancellationToken);
         return results;
+    }
+
+    /// <summary>Deja las entradas modificadas en [from, to). Consulta la fecha en paralelo; queda en cache.</summary>
+    static List<SearchResult> FilterByModified(List<SearchResult> results, DateTime? from, DateTime? to,
+        CancellationToken cancellationToken)
+    {
+        var keep = new bool[results.Count];
+        Parallel.For(0, results.Count, new ParallelOptions { CancellationToken = cancellationToken }, i =>
+        {
+            var modified = results[i].Modified;
+            keep[i] = modified is { } m && (from is null || m >= from) && (to is null || m < to);
+        });
+
+        var filtered = new List<SearchResult>();
+        for (int i = 0; i < keep.Length; i++)
+            if (keep[i]) filtered.Add(results[i]);
+        return filtered;
     }
 
     public void Dispose()

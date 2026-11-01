@@ -17,6 +17,7 @@ bool descending = false;
 bool details = false;
 bool memory = false;
 bool viaService = false;
+DateTime? modifiedFrom = null, modifiedTo = null;
 
 for (int i = 0; i < args.Length; i++)
 {
@@ -56,6 +57,13 @@ for (int i = 0; i < args.Length; i++)
         case "--service":
             viaService = true;
             break;
+        case "--from":
+            modifiedFrom = DateTime.Parse(args[++i]).Date;
+            break;
+        case "--to":
+            // Inclusivo: hasta el final de ese dia
+            modifiedTo = DateTime.Parse(args[++i]).Date.AddDays(1);
+            break;
         case "-k" or "--kind":
             kind = args[++i].ToLowerInvariant() switch
             {
@@ -69,7 +77,8 @@ for (int i = 0; i < args.Length; i++)
             break;
         case "-h" or "--help":
             Console.WriteLine("Uso: easysearch [-d C,D] [-r carpeta] [-k all|files|dirs] [-s (incluir sistema)] [-n 50 (0 = todos)]");
-            Console.WriteLine("                  [-o name|folder|size|date[-]] [-l (tamano y fecha)] [-w segundos (vigilar cambios)] [texto]");
+            Console.WriteLine("                  [-o name|folder|size|date[-]] [-l (tamano y fecha)] [-w segundos (vigilar cambios)]");
+            Console.WriteLine("                  [--from aaaa-mm-dd] [--to aaaa-mm-dd] [--service] [texto]");
             return 0;
         default:
             text = args[i];
@@ -121,7 +130,14 @@ if (root is not null)
     Console.Error.WriteLine($"Raiz: {scope.RootPath} ({sw.Elapsed.TotalMilliseconds:N0} ms)");
 }
 
-var options = new SearchOptions { Kind = kind, Scope = scope, IncludeSystem = includeSystem };
+var options = new SearchOptions
+{
+    Kind = kind,
+    Scope = scope,
+    IncludeSystem = includeSystem,
+    ModifiedFrom = modifiedFrom,
+    ModifiedTo = modifiedTo,
+};
 sw.Restart();
 var results = index.Search(text, options);
 var searchMs = sw.Elapsed.TotalMilliseconds;
@@ -179,7 +195,13 @@ int QueryService()
         Console.Error.WriteLine($"Servicio: {status.Entries:N0} entradas en {string.Join(" ", status.Drives)}");
 
         var sw = Stopwatch.StartNew();
-        var response = client.Search(new SearchRequest(text, kind, root, includeSystem, sort, descending));
+        if ((modifiedFrom is not null || modifiedTo is not null) && status.ProtocolVersion < Protocol.Version)
+        {
+            Console.Error.WriteLine("ERROR: el servicio instalado es una version anterior y no filtra por fecha.");
+            return 1;
+        }
+        var response = client.Search(new SearchRequest(text, kind, root, includeSystem, sort, descending,
+            ModifiedFrom: modifiedFrom, ModifiedTo: modifiedTo));
         var rows = client.GetRows(response.SearchId, 0, max > 0 ? max : response.Total);
         var detailsRows = details ? client.GetDetails(response.SearchId, 0, rows.Length) : [];
         double roundTrip = sw.Elapsed.TotalMilliseconds;

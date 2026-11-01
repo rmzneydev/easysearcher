@@ -177,7 +177,12 @@ public partial class MainWindow : Window
             : $"  ·  sin actualizacion en vivo en {string.Join(" ", status.NotLive.Select(d => d + ":"))}";
         if (status.Failures.Length > 0)
             text += "   |   No indexadas: " + string.Join("; ", status.Failures);
+        if (!DateFilterEnabled)
+            text += "   |   El servicio instalado es una version anterior: actualiza EasySearcher para filtrar por fecha";
         StatusText.Text = text + source;
+
+        DateBox.IsEnabled = DateFilterEnabled;
+        DateBox.ToolTip = DateFilterEnabled ? "Fecha de modificacion" : "Requiere actualizar el servicio de EasySearcher";
     }
 
     bool IsReady => _service is not null && _status is { Ready: true };
@@ -229,7 +234,14 @@ public partial class MainWindow : Window
         int version = ++_searchVersion;
         string text = QueryBox.Text.Trim();
         string where = _appliedRoot ?? "todas las unidades";
-        if (text.Length == 0)
+
+        var preset = DateFilterEnabled ? (DatePreset)DateBox.SelectedIndex : DatePreset.Any;
+        var (from, to) = DateFilter.GetRange(preset, FromDate.SelectedDate, ToDate.SelectedDate, DateTime.Now);
+        string dateText = DateFilter.Describe(preset, FromDate.SelectedDate, ToDate.SelectedDate);
+        if (dateText.Length > 0) where += $", {dateText}";
+
+        // Sin texto solo se busca si hay filtro de fecha (p. ej. "todo lo modificado hoy en Descargas")
+        if (text.Length == 0 && from is null && to is null)
         {
             ResultsList.ItemsSource = null;
             ResultText.Text = $"Buscando en {where}";
@@ -244,10 +256,14 @@ public partial class MainWindow : Window
             SystemBox.IsChecked == true,
             _settings.SortColumn,
             _settings.SortDescending,
-            preserveView ? current?.SearchId ?? 0 : 0);
+            preserveView ? current?.SearchId ?? 0 : 0,
+            from,
+            to);
 
         try
         {
+            if (!preserveView && (from is not null || to is not null))
+                ResultText.Text = "Filtrando por fecha...";
             var response = await Task.Run(() => service.Search(request));
             // Si mientras tanto se lanzo otra busqueda, esta respuesta ya no interesa
             if (version != _searchVersion) return;
@@ -381,6 +397,19 @@ public partial class MainWindow : Window
     }
 
     async void KindBox_SelectionChanged(object sender, SelectionChangedEventArgs e) => await SearchAsync();
+
+    /// <summary>Un servicio instalado anterior al filtro de fecha lo ignoraria sin avisar.</summary>
+    bool DateFilterEnabled => _status is null || _status.ProtocolVersion >= Protocol.Version;
+
+    async void DateBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        // Se dispara durante InitializeComponent, antes de que exista el panel
+        if (CustomDatePanel is null) return;
+        CustomDatePanel.Visibility = (DatePreset)DateBox.SelectedIndex == DatePreset.Custom ? Visibility.Visible : Visibility.Collapsed;
+        await SearchAsync();
+    }
+
+    async void CustomDate_Changed(object? sender, SelectionChangedEventArgs e) => await SearchAsync();
 
     async void SystemBox_Click(object sender, RoutedEventArgs e)
     {
