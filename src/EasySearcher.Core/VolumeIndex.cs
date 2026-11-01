@@ -64,11 +64,15 @@ public sealed class VolumeIndex
 
     public bool IsDirectory(int entry) => (GetAttributes(entry) & FileAttributes.Directory) != 0;
 
-    public string GetFullPath(int entry)
+    public string GetFullPath(int entry) => BuildPath(_parent[entry], _names[entry]);
+
+    /// <summary>Ruta de la carpeta que contiene la entrada.</summary>
+    public string GetDirectoryPath(int entry) => BuildPath(_parent[entry], null);
+
+    string BuildPath(ulong p, string? leaf)
     {
         var chain = new Stack<string>();
-        chain.Push(_names[entry]);
-        ulong p = _parent[entry];
+        if (leaf is not null) chain.Push(leaf);
         for (int depth = 0; p != RootFrn && depth < MaxDepth; depth++)
         {
             if (!_byFrn.TryGetValue(p, out int j))

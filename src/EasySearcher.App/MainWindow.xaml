@@ -1,12 +1,74 @@
 ﻿<Window x:Class="EasySearcher.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        xmlns:local="clr-namespace:EasySearcher.App"
-        mc:Ignorable="d"
-        Title="MainWindow" Height="450" Width="800">
-    <Grid>
+        Title="EasySearcher" Height="640" Width="1100"
+        WindowStartupLocation="CenterScreen"
+        FocusManager.FocusedElement="{Binding ElementName=QueryBox}">
+    <DockPanel>
+        <Grid DockPanel.Dock="Top" Margin="8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBox x:Name="QueryBox" FontSize="15" Padding="6,4" VerticalContentAlignment="Center"
+                     TextChanged="QueryBox_TextChanged" PreviewKeyDown="QueryBox_PreviewKeyDown" />
+            <ComboBox x:Name="KindBox" Grid.Column="1" Width="110" Margin="8,0,0,0" SelectedIndex="0"
+                      VerticalContentAlignment="Center" SelectionChanged="KindBox_SelectionChanged">
+                <ComboBoxItem Content="Todo" />
+                <ComboBoxItem Content="Archivos" />
+                <ComboBoxItem Content="Carpetas" />
+            </ComboBox>
+        </Grid>
 
-    </Grid>
+        <StatusBar DockPanel.Dock="Bottom">
+            <StatusBarItem>
+                <TextBlock x:Name="StatusText" Text="Indexando unidades NTFS..." />
+            </StatusBarItem>
+            <StatusBarItem HorizontalAlignment="Right">
+                <TextBlock x:Name="ResultText" />
+            </StatusBarItem>
+        </StatusBar>
+
+        <!-- IsTextSearchEnabled en falso: con cientos de miles de filas la busqueda por tecla es muy lenta -->
+        <ListView x:Name="ResultsList" SelectionMode="Extended" IsTextSearchEnabled="False"
+                  VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                  KeyDown="ResultsList_KeyDown">
+            <ListView.ItemContainerStyle>
+                <Style TargetType="ListViewItem">
+                    <EventSetter Event="MouseDoubleClick" Handler="ResultItem_DoubleClick" />
+                </Style>
+            </ListView.ItemContainerStyle>
+            <ListView.ContextMenu>
+                <ContextMenu>
+                    <MenuItem Header="_Abrir" InputGestureText="Enter" Click="OpenMenu_Click" />
+                    <MenuItem Header="Abrir _carpeta contenedora" InputGestureText="Ctrl+Enter" Click="ShowInFolderMenu_Click" />
+                    <Separator />
+                    <MenuItem Header="Copiar _ruta completa" InputGestureText="Ctrl+C" Click="CopyPathMenu_Click" />
+                    <MenuItem Header="Copiar _nombre" Click="CopyNameMenu_Click" />
+                </ContextMenu>
+            </ListView.ContextMenu>
+            <ListView.View>
+                <GridView>
+                    <GridViewColumn Header="Nombre" Width="360">
+                        <GridViewColumn.CellTemplate>
+                            <DataTemplate>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock x:Name="Glyph" FontFamily="Segoe MDL2 Assets" Text="&#xE8A5;"
+                                               Margin="0,0,6,0" VerticalAlignment="Center" Foreground="Gray" />
+                                    <TextBlock Text="{Binding Name}" />
+                                </StackPanel>
+                                <DataTemplate.Triggers>
+                                    <DataTrigger Binding="{Binding IsDirectory}" Value="True">
+                                        <Setter TargetName="Glyph" Property="Text" Value="&#xE8B7;" />
+                                        <Setter TargetName="Glyph" Property="Foreground" Value="Goldenrod" />
+                                    </DataTrigger>
+                                </DataTemplate.Triggers>
+                            </DataTemplate>
+                        </GridViewColumn.CellTemplate>
+                    </GridViewColumn>
+                    <GridViewColumn Header="Carpeta" Width="680" DisplayMemberBinding="{Binding DirectoryPath}" />
+                </GridView>
+            </ListView.View>
+        </ListView>
+    </DockPanel>
 </Window>

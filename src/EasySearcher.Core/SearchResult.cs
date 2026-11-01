@@ -7,4 +7,5 @@ public readonly record struct SearchResult(VolumeIndex Volume, int Entry)
     public bool IsDirectory => Volume.IsDirectory(Entry);
     public FileAttributes Attributes => Volume.GetAttributes(Entry);
     public string FullPath => Volume.GetFullPath(Entry);
+    public string DirectoryPath => Volume.GetDirectoryPath(Entry);
 }
