@@ -4,8 +4,8 @@
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
     <security>
       <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
-        <!-- Leer la MFT requiere administrador. Mas adelante esto pasara a un servicio. -->
-        <requestedExecutionLevel level="requireAdministrator" uiAccess="false" />
+        <!-- El indice lo mantiene el servicio de Windows; la app corre como usuario normal -->
+        <requestedExecutionLevel level="asInvoker" uiAccess="false" />
       </requestedPrivileges>
     </security>
   </trustInfo>

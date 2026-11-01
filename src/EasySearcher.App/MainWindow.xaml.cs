@@ -1,12 +1,13 @@
-﻿using System.Diagnostics;
-using System.IO;
+﻿using System.IO;
 using System.Runtime.InteropServices;
+using System.Security.Principal;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using EasySearcher.Core;
+using EasySearcher.Core.Service;
 using Microsoft.Win32;
 
 namespace EasySearcher.App;
@@ -14,12 +15,16 @@ namespace EasySearcher.App;
 public partial class MainWindow : Window
 {
     readonly Settings _settings = Settings.Load();
-    FileIndex? _index;
-    TimeSpan _buildTime;
-    SearchScope? _scope;
-    string? _appliedRoot;
-    CancellationTokenSource? _searchCts;
     readonly Dictionary<GridViewColumn, (SortColumn Sort, string Title)> _columns;
+    readonly DispatcherTimer _statusTimer = new() { Interval = TimeSpan.FromSeconds(1) };
+
+    ISearchService? _service;
+    bool _usingLocalEngine;
+    EngineStatus? _status;
+    bool _polling;
+    string? _appliedRoot;
+    bool _rootApplied;
+    int _searchVersion;
 
     public MainWindow()
     {
@@ -36,77 +41,143 @@ public partial class MainWindow : Window
         };
         UpdateSortHeaders();
 
-        Loaded += async (_, _) => await BuildIndexAsync();
-        Closed += (_, _) => _index?.Dispose();
+        _statusTimer.Tick += async (_, _) => await PollStatusAsync();
+        Loaded += async (_, _) =>
+        {
+            await PollStatusAsync();
+            _statusTimer.Start();
+        };
+        Closed += (_, _) =>
+        {
+            _statusTimer.Stop();
+            _service?.Dispose();
+        };
     }
 
-    async Task BuildIndexAsync()
+    /// <summary>
+    /// Se conecta al servicio si hace falta, actualiza la barra de estado y repite la busqueda si el
+    /// indice cambio. Se llama cada segundo.
+    /// </summary>
+    async Task PollStatusAsync()
     {
-        var drives = FileIndex.GetNtfsDrives();
-        StatusText.Text = $"Indexando {string.Join(", ", drives.Select(d => d + ":"))}...";
+        if (_polling) return;
+        _polling = true;
+        try
+        {
+            _service ??= await ConnectAsync();
+            if (_service is not { } service) return;
 
-        var sw = Stopwatch.StartNew();
-        var index = await Task.Run(() => FileIndex.Build(drives));
-        _buildTime = sw.Elapsed;
-        _index = index;
-        UpdateStatus();
+            EngineStatus status;
+            try
+            {
+                status = await Task.Run(service.GetStatus);
+            }
+            catch (SearchServiceException)
+            {
+                // El servicio se detuvo: se reintenta en la siguiente vuelta
+                service.Dispose();
+                _service = null;
+                _status = null;
+                StatusText.Text = "Se perdio la conexion con el servicio de EasySearcher. Reintentando...";
+                return;
+            }
 
-        index.Changed += Index_Changed;
-        index.StartWatching(TimeSpan.FromSeconds(1));
+            var previous = _status;
+            _status = status;
+            UpdateStatus(status);
 
-        await ApplyRootAsync();
+            if (!status.Ready) return;
+            if (!_rootApplied)
+                await ApplyRootAsync();
+            else if (previous is { Ready: true } && previous.ChangeCounter != status.ChangeCounter)
+                await SearchAsync(preserveView: true);
+        }
+        finally
+        {
+            _polling = false;
+        }
     }
 
-    void UpdateStatus()
+    /// <summary>
+    /// Usa el servicio de Windows. Si no esta y la app corre como administrador, construye el indice en
+    /// este mismo proceso (util para desarrollo).
+    /// </summary>
+    async Task<ISearchService?> ConnectAsync()
     {
-        if (_index is not { } index) return;
+        try
+        {
+            return await Task.Run(PipeSearchClient.Connect);
+        }
+        catch (SearchServiceException)
+        {
+        }
 
-        var status = $"{index.Count:N0} entradas en {string.Join(" ", index.Volumes.Select(v => v.Drive + ":"))} " +
-                     $"(indexado en {_buildTime.TotalSeconds:N1} s)";
-        var notLive = index.Volumes.Where(v => !v.IsLive).Select(v => v.Drive + ":").ToArray();
-        status += notLive.Length == 0 ? "  ·  actualizado en vivo" : $"  ·  sin actualizacion en vivo en {string.Join(" ", notLive)}";
-        if (index.Failures.Count > 0)
-            status += "   |   No indexadas: " + string.Join("; ", index.Failures.Select(f => $"{f.Key}: {f.Value.Message}"));
-        StatusText.Text = status;
+        if (IsElevated())
+        {
+            _usingLocalEngine = true;
+            return new SearchEngine(FileIndex.GetNtfsDrives());
+        }
+
+        StatusText.Text = "El servicio de EasySearcher no esta en ejecucion. Reintentando...";
+        return null;
     }
 
-    // Llega desde el hilo que vigila el USN Journal
-    void Index_Changed(object? sender, EventArgs e) => Dispatcher.InvokeAsync(async () =>
+    static bool IsElevated()
     {
-        UpdateStatus();
-        await SearchAsync(preserveView: true);
-    });
+        using var identity = WindowsIdentity.GetCurrent();
+        return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
+    }
+
+    void UpdateStatus(EngineStatus status)
+    {
+        string source = _usingLocalEngine ? "  ·  sin servicio (indice en esta ventana)" : "";
+        if (!status.Ready)
+        {
+            StatusText.Text = status.Failures.Length > 0
+                ? string.Join("; ", status.Failures)
+                : $"Indexando unidades NTFS... ({status.BuildSeconds:N0} s){source}";
+            return;
+        }
+
+        var text = $"{status.Entries:N0} entradas en {string.Join(" ", status.Drives.Select(d => d + ":"))}";
+        text += status.NotLive.Length == 0
+            ? "  ·  actualizado en vivo"
+            : $"  ·  sin actualizacion en vivo en {string.Join(" ", status.NotLive.Select(d => d + ":"))}";
+        if (status.Failures.Length > 0)
+            text += "   |   No indexadas: " + string.Join("; ", status.Failures);
+        StatusText.Text = text + source;
+    }
+
+    bool IsReady => _service is not null && _status is { Ready: true };
 
     /// <summary>Valida la carpeta de RootBox y la usa como raiz de las busquedas (vacio = todas las unidades).</summary>
     async Task ApplyRootAsync()
     {
-        var index = _index;
+        if (!IsReady || _service is not { } service) return;
         string root = RootBox.Text.Trim();
-        if (index is null || root == _appliedRoot) return;
+        if (_rootApplied && root == (_appliedRoot ?? "")) return;
 
-        if (root.Length == 0)
-        {
-            _scope = null;
-        }
-        else
+        string? resolved = null;
+        if (root.Length > 0)
         {
             try
             {
-                _scope = await Task.Run(() => index.CreateScope(root));
+                resolved = await Task.Run(() => service.ResolveRoot(root));
             }
-            catch (Exception ex) when (ex is IOException or ArgumentException or NotSupportedException)
+            catch (SearchServiceException ex)
             {
                 RootBox.BorderBrush = Brushes.IndianRed;
                 ResultsList.ItemsSource = null;
                 ResultText.Text = ex.Message;
                 return;
             }
-            RootBox.Text = _scope.RootPath;
+            RootBox.Text = resolved;
         }
 
         RootBox.ClearValue(BorderBrushProperty);
-        _appliedRoot = RootBox.Text;
-        _settings.RootPath = _scope?.RootPath;
+        _appliedRoot = resolved;
+        _rootApplied = true;
+        _settings.RootPath = resolved;
         _settings.Save();
         await SearchAsync();
     }
@@ -121,12 +192,11 @@ public partial class MainWindow : Window
     /// los mismos y, si cambiaron, conservar la seleccion y la posicion del scroll.</param>
     async Task SearchAsync(bool preserveView = false)
     {
-        var index = _index;
-        if (index is null) return;
+        if (!IsReady || !_rootApplied || _service is not { } service) return;
 
-        _searchCts?.Cancel();
+        int version = ++_searchVersion;
         string text = QueryBox.Text.Trim();
-        string where = _scope?.RootPath ?? "todas las unidades";
+        string where = _appliedRoot ?? "todas las unidades";
         if (text.Length == 0)
         {
             ResultsList.ItemsSource = null;
@@ -134,34 +204,33 @@ public partial class MainWindow : Window
             return;
         }
 
-        var cts = _searchCts = new CancellationTokenSource();
-        var options = new SearchOptions
-        {
-            Kind = (EntryKind)KindBox.SelectedIndex,
-            Scope = _scope,
-            IncludeSystem = SystemBox.IsChecked == true,
-        };
-        var (sortColumn, sortDescending) = (_settings.SortColumn, _settings.SortDescending);
+        var current = ResultsList.ItemsSource as VirtualResultList;
+        var request = new SearchRequest(
+            text,
+            (EntryKind)KindBox.SelectedIndex,
+            _appliedRoot,
+            SystemBox.IsChecked == true,
+            _settings.SortColumn,
+            _settings.SortDescending,
+            preserveView ? current?.SearchId ?? 0 : 0);
 
         try
         {
-            var sw = Stopwatch.StartNew();
-            var results = await Task.Run(() =>
-            {
-                var found = index.Search(text, options, cts.Token);
-                ResultSorter.Sort(found, sortColumn, sortDescending, cts.Token);
-                return found;
-            }, cts.Token);
-            if (cts.IsCancellationRequested) return;
+            var response = await Task.Run(() => service.Search(request));
+            // Si mientras tanto se lanzo otra busqueda, esta respuesta ya no interesa
+            if (version != _searchVersion) return;
 
-            if (!preserveView)
-                ResultsList.ItemsSource = results;
-            else if (ResultsList.ItemsSource is not List<SearchResult> old || !old.SequenceEqual(results))
-                ReplaceResultsKeepingView(results);
-            ResultText.Text = $"{results.Count:N0} resultados en {where}  ·  {sw.Elapsed.TotalMilliseconds:N0} ms";
+            ResultText.Text = $"{response.Total:N0} resultados en {where}  ·  {response.ElapsedMs:N0} ms";
+            if (preserveView && response.Unchanged) return;
+
+            var list = new VirtualResultList(service, response.SearchId, response.Total,
+                onExpired: () => Dispatcher.InvokeAsync(() => SearchAsync(preserveView: true)));
+            if (preserveView) ReplaceResultsKeepingView(list);
+            else ResultsList.ItemsSource = list;
         }
-        catch (OperationCanceledException)
+        catch (SearchServiceException ex)
         {
+            if (version == _searchVersion) ResultText.Text = ex.Message;
         }
     }
 
@@ -198,21 +267,29 @@ public partial class MainWindow : Window
         }
     }
 
-    void ReplaceResultsKeepingView(List<SearchResult> results)
+    void ReplaceResultsKeepingView(VirtualResultList list)
     {
         var scroll = FindDescendant<ScrollViewer>(ResultsList);
         double offset = scroll?.VerticalOffset ?? 0;
-        var selected = Selected.ToHashSet();
+        var selected = Selected.ToList();
 
-        ResultsList.ItemsSource = results;
+        ResultsList.ItemsSource = list;
 
-        if (selected.Count > 0)
-        {
-            foreach (var r in results)
-                if (selected.Contains(r)) ResultsList.SelectedItems.Add(r);
-        }
         if (scroll is not null)
             Dispatcher.InvokeAsync(() => scroll.ScrollToVerticalOffset(offset), DispatcherPriority.Loaded);
+
+        // La seleccion se recupera cuando ya se cargaron las paginas visibles
+        if (selected.Count > 0)
+        {
+            Dispatcher.InvokeAsync(() =>
+            {
+                foreach (var row in selected)
+                {
+                    int i = list.IndexOf(row);
+                    if (i >= 0) ResultsList.SelectedItems.Add(list[i]);
+                }
+            }, DispatcherPriority.ContextIdle);
+        }
     }
 
     static T? FindDescendant<T>(DependencyObject parent) where T : DependencyObject
@@ -236,7 +313,7 @@ public partial class MainWindow : Window
             case Key.Enter:
                 e.Handled = true;
                 await ApplyRootAsync();
-                if (_appliedRoot == RootBox.Text) QueryBox.Focus();
+                if (RootBox.Text == (_appliedRoot ?? "")) QueryBox.Focus();
                 break;
             case Key.Escape:
                 e.Handled = true;
@@ -261,7 +338,7 @@ public partial class MainWindow : Window
 
     async void SearchHereMenu_Click(object sender, RoutedEventArgs e)
     {
-        if (ResultsList.SelectedItem is SearchResult r)
+        if (ResultsList.SelectedItem is ResultRow r)
             await SetRootAsync(r.IsDirectory ? r.FullPath : r.DirectoryPath);
     }
 
@@ -291,7 +368,7 @@ public partial class MainWindow : Window
                 e.Handled = true;
                 break;
             case Key.Enter when ResultsList.Items.Count > 0:
-                var first = (SearchResult)ResultsList.Items[0];
+                var first = (ResultRow)ResultsList.Items[0];
                 if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) Shell.ShowInFolder(first.FullPath);
                 else Shell.Open(first.FullPath);
                 e.Handled = true;
@@ -325,8 +402,8 @@ public partial class MainWindow : Window
 
     void ResultItem_DoubleClick(object sender, MouseButtonEventArgs e)
     {
-        if (sender is ListViewItem { Content: SearchResult result })
-            Shell.Open(result.FullPath);
+        if (sender is ListViewItem { Content: ResultRow row })
+            Shell.Open(row.FullPath);
     }
 
     void OpenMenu_Click(object sender, RoutedEventArgs e) => OpenSelected();
@@ -337,7 +414,7 @@ public partial class MainWindow : Window
 
     void CopyNameMenu_Click(object sender, RoutedEventArgs e) => CopyToClipboard(Selected.Select(r => r.Name));
 
-    IEnumerable<SearchResult> Selected => ResultsList.SelectedItems.Cast<SearchResult>();
+    IEnumerable<ResultRow> Selected => ResultsList.SelectedItems.Cast<ResultRow>();
 
     void OpenSelected()
     {
@@ -348,7 +425,7 @@ public partial class MainWindow : Window
 
     void ShowSelectedInFolder()
     {
-        if (ResultsList.SelectedItem is SearchResult r)
+        if (ResultsList.SelectedItem is ResultRow r)
             Shell.ShowInFolder(r.FullPath);
     }
 

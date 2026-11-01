@@ -5,9 +5,9 @@ using System.Windows;
 namespace EasySearcher.App;
 
 /// <summary>
-/// Abre archivos y carpetas a traves de explorer.exe. Como la app corre como administrador,
-/// explorer.exe delega en la instancia del escritorio del usuario y lo que se abre no hereda
-/// los permisos elevados.
+/// Abre archivos y carpetas a traves de explorer.exe. Si la app corre como administrador (modo sin
+/// servicio), explorer.exe delega en la instancia del escritorio del usuario y lo que se abre no
+/// hereda los permisos elevados.
 /// </summary>
 static class Shell
 {

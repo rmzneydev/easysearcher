@@ -1,5 +1,6 @@
 ﻿using System.Diagnostics;
 using EasySearcher.Core;
+using EasySearcher.Core.Service;
 
 // Uso: easysearch [-d C,D] [-r carpeta] [-k all|files|dirs] [-s] [-n 50] [-w segundos] [texto]
 // Requiere ejecutarse como administrador.
@@ -15,6 +16,7 @@ var sort = SortColumn.None;
 bool descending = false;
 bool details = false;
 bool memory = false;
+bool viaService = false;
 
 for (int i = 0; i < args.Length; i++)
 {
@@ -51,6 +53,9 @@ for (int i = 0; i < args.Length; i++)
         case "--mem":
             memory = true;
             break;
+        case "--service":
+            viaService = true;
+            break;
         case "-k" or "--kind":
             kind = args[++i].ToLowerInvariant() switch
             {
@@ -71,6 +76,9 @@ for (int i = 0; i < args.Length; i++)
             break;
     }
 }
+
+if (viaService)
+    return QueryService();
 
 if (drives.Count == 0) drives.AddRange(FileIndex.GetNtfsDrives());
 
@@ -153,6 +161,48 @@ if (watchSeconds > 0)
 
 index.Dispose();
 return index.Volumes.Count > 0 ? 0 : 1;
+
+// Consulta al servicio de Windows por el named pipe; no requiere administrador
+int QueryService()
+{
+    try
+    {
+        var total = Stopwatch.StartNew();
+        using var client = PipeSearchClient.Connect();
+        var status = client.GetStatus();
+        while (!status.Ready)
+        {
+            Console.Error.WriteLine($"El servicio esta indexando ({status.BuildSeconds:N0} s)...");
+            Thread.Sleep(1000);
+            status = client.GetStatus();
+        }
+        Console.Error.WriteLine($"Servicio: {status.Entries:N0} entradas en {string.Join(" ", status.Drives)}");
+
+        var sw = Stopwatch.StartNew();
+        var response = client.Search(new SearchRequest(text, kind, root, includeSystem, sort, descending));
+        var rows = client.GetRows(response.SearchId, 0, max > 0 ? max : response.Total);
+        var detailsRows = details ? client.GetDetails(response.SearchId, 0, rows.Length) : [];
+        double roundTrip = sw.Elapsed.TotalMilliseconds;
+
+        for (int i = 0; i < rows.Length; i++)
+        {
+            var r = rows[i];
+            var line = $"{(r.IsDirectory ? "[D]" : "   ")} {Path.Join(r.Directory, r.Name)}";
+            if (details && i < detailsRows.Length)
+                line = $"{detailsRows[i].Size?.ToString() ?? "",12}  {detailsRows[i].Modified:yyyy-MM-dd HH:mm}  {line}";
+            Console.WriteLine(line);
+        }
+        Console.Error.WriteLine($"\n{response.Total:N0} coincidencias{(response.Root is null ? "" : " en " + response.Root)}: " +
+                                $"busqueda {response.ElapsedMs:N1} ms en el servicio, {roundTrip:N1} ms ida y vuelta, " +
+                                $"{total.Elapsed.TotalMilliseconds:N0} ms en total");
+        return 0;
+    }
+    catch (SearchServiceException ex)
+    {
+        Console.Error.WriteLine($"ERROR: {ex.Message}");
+        return 1;
+    }
+}
 
 string Format(SearchResult r)
 {

@@ -483,3 +483,6 @@ $RECYCLE.BIN/
 
 # Salida local de las pruebas de concepto
 poc/*-result.txt
+
+# Publicaciones locales (servicio de desarrollo, instalador)
+artifacts/

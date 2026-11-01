@@ -101,17 +101,17 @@
                         </GridViewColumn.CellTemplate>
                     </GridViewColumn>
                     <GridViewColumn x:Name="FolderColumn" Header="Carpeta" Width="540" DisplayMemberBinding="{Binding DirectoryPath}" />
-                    <!-- IsAsync: el tamano y la fecha se leen del disco la primera vez, sin bloquear la ventana -->
+                    <!-- El tamano y la fecha llegan despues que el resto de la fila (ResultRow notifica el cambio) -->
                     <GridViewColumn x:Name="SizeColumn" Header="Tamaño" Width="100">
                         <GridViewColumn.CellTemplate>
                             <DataTemplate>
                                 <TextBlock HorizontalAlignment="Right"
-                                           Text="{Binding Size, IsAsync=True, Converter={StaticResource SizeConverter}}" />
+                                           Text="{Binding Size, Converter={StaticResource SizeConverter}}" />
                             </DataTemplate>
                         </GridViewColumn.CellTemplate>
                     </GridViewColumn>
                     <GridViewColumn x:Name="ModifiedColumn" Header="Modificado" Width="130"
-                                    DisplayMemberBinding="{Binding Modified, IsAsync=True, StringFormat=yyyy-MM-dd HH:mm}" />
+                                    DisplayMemberBinding="{Binding Modified, StringFormat=yyyy-MM-dd HH:mm}" />
                 </GridView>
             </ListView.View>
         </ListView>
