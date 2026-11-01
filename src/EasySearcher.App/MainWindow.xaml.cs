@@ -26,6 +26,11 @@ public partial class MainWindow : Window
     bool _rootApplied;
     int _searchVersion;
 
+    // Arrastrar y soltar
+    Point _dragStart;
+    bool _dragCandidate;
+    ResultRow? _deferredClick;
+
     internal MainWindow(StartupArgs args)
     {
         InitializeComponent();
@@ -425,6 +430,68 @@ public partial class MainWindow : Window
                 e.Handled = true;
                 break;
         }
+    }
+
+    void ResultsList_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        var item = FindAncestor<ListViewItem>(e.OriginalSource as DependencyObject);
+        _dragStart = e.GetPosition(ResultsList);
+        _dragCandidate = item is not null;
+        _deferredClick = null;
+
+        // Clic simple sobre una fila de una seleccion multiple: se conserva la seleccion para poder
+        // arrastrarla entera. Si al final no se arrastra, el clic se aplica al soltar el boton.
+        if (item is { IsSelected: true, Content: ResultRow row } && e.ClickCount == 1 &&
+            ResultsList.SelectedItems.Count > 1 && Keyboard.Modifiers == ModifierKeys.None)
+        {
+            _deferredClick = row;
+            item.Focus();
+            e.Handled = true;
+        }
+    }
+
+    void ResultsList_PreviewMouseMove(object sender, MouseEventArgs e)
+    {
+        if (!_dragCandidate || e.LeftButton != MouseButtonState.Pressed) return;
+
+        var delta = e.GetPosition(ResultsList) - _dragStart;
+        if (Math.Abs(delta.X) < SystemParameters.MinimumHorizontalDragDistance &&
+            Math.Abs(delta.Y) < SystemParameters.MinimumVerticalDragDistance)
+            return;
+
+        _dragCandidate = false;
+        _deferredClick = null;
+
+        var paths = Selected.Where(r => r.Name.Length > 0).Select(r => r.FullPath).ToArray();
+        if (paths.Length == 0) return;
+
+        // Como archivos (Explorador, correo, navegadores...) y como texto para lo que solo acepta texto
+        var data = new DataObject();
+        data.SetData(DataFormats.FileDrop, paths);
+        data.SetData(DataFormats.UnicodeText, string.Join(Environment.NewLine, paths));
+
+        // Copiar, mover o acceso directo: decide el destino, igual que entre ventanas del Explorador
+        DragDrop.DoDragDrop(ResultsList, data, DragDropEffects.Copy | DragDropEffects.Move | DragDropEffects.Link);
+    }
+
+    void ResultsList_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (_deferredClick is { } row)
+        {
+            ResultsList.SelectedItems.Clear();
+            ResultsList.SelectedItem = row;
+        }
+        _deferredClick = null;
+        _dragCandidate = false;
+    }
+
+    static T? FindAncestor<T>(DependencyObject? element) where T : DependencyObject
+    {
+        while (element is not null and not T)
+            element = element is Visual or System.Windows.Media.Media3D.Visual3D
+                ? VisualTreeHelper.GetParent(element)
+                : LogicalTreeHelper.GetParent(element);
+        return element as T;
     }
 
     void ResultItem_DoubleClick(object sender, MouseButtonEventArgs e)

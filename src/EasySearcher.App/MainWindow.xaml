@@ -63,7 +63,10 @@
         <!-- IsTextSearchEnabled en falso: con cientos de miles de filas la busqueda por tecla es muy lenta -->
         <ListView x:Name="ResultsList" SelectionMode="Extended" IsTextSearchEnabled="False"
                   VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
-                  KeyDown="ResultsList_KeyDown" GridViewColumnHeader.Click="ColumnHeader_Click">
+                  KeyDown="ResultsList_KeyDown" GridViewColumnHeader.Click="ColumnHeader_Click"
+                  PreviewMouseLeftButtonDown="ResultsList_PreviewMouseLeftButtonDown"
+                  PreviewMouseMove="ResultsList_PreviewMouseMove"
+                  PreviewMouseLeftButtonUp="ResultsList_PreviewMouseLeftButtonUp">
             <ListView.ItemContainerStyle>
                 <Style TargetType="ListViewItem">
                     <!-- Stretch para poder alinear a la derecha la columna de tamano -->
