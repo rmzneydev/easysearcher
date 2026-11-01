@@ -12,6 +12,12 @@
     <UseWPF>true</UseWPF>
     <AssemblyName>EasySearcher</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Se genera con el script tools/make-icon.cs (ver instrucciones en el archivo) -->
+    <ApplicationIcon>Assets\EasySearcher.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\EasySearcher.ico" />
+  </ItemGroup>
 
 </Project>
