@@ -26,10 +26,11 @@ public partial class MainWindow : Window
     bool _rootApplied;
     int _searchVersion;
 
-    public MainWindow()
+    internal MainWindow(StartupArgs args)
     {
         InitializeComponent();
-        RootBox.Text = _settings.RootPath ?? "";
+        RootBox.Text = args.Root ?? _settings.RootPath ?? "";
+        QueryBox.Text = args.Query ?? "";
         SystemBox.IsChecked = _settings.IncludeSystem;
 
         _columns = new()
@@ -52,6 +53,32 @@ public partial class MainWindow : Window
             _statusTimer.Stop();
             _service?.Dispose();
         };
+    }
+
+    /// <summary>Otra instancia (p. ej. el clic derecho del Explorador) pidio abrir esta ventana con estos argumentos.</summary>
+    internal async Task HandleArgsAsync(StartupArgs args)
+    {
+        BringToFront();
+        if (args.Query is not null) QueryBox.Text = args.Query;
+        if (args.Root is not null)
+        {
+            RootBox.Text = args.Root;
+            // Si el indice aun no esta listo, la raiz se aplica cuando lo este
+            _rootApplied = false;
+            await ApplyRootAsync();
+        }
+        QueryBox.Focus();
+        QueryBox.SelectAll();
+    }
+
+    void BringToFront()
+    {
+        if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+        Show();
+        Activate();
+        // Topmost por un instante: fuerza el frente cuando Activate solo hace parpadear la barra de tareas
+        Topmost = true;
+        Topmost = false;
     }
 
     /// <summary>
