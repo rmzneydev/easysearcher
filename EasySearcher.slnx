@@ -5,4 +5,7 @@
     <Project Path="src/EasySearcher.Core/EasySearcher.Core.csproj" />
     <Project Path="src/EasySearcher.Service/EasySearcher.Service.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/EasySearcher.Tests/EasySearcher.Tests.csproj" />
+  </Folder>
 </Solution>
