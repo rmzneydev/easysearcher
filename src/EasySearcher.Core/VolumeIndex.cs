@@ -12,11 +12,18 @@ public sealed class VolumeIndex
     const ulong RootFrn = 5;
     const int MaxDepth = 512;
 
+    // Marcas por entrada, calculadas al construir el indice
+    const byte Orphan = 0x1;      // su cadena de padres no llega a la raiz: metarchivos de NTFS ($Extend, ...)
+    const byte SystemTree = 0x2;  // ella o alguna carpeta que la contiene es oculta + sistema
+    const byte Computed = 0x80;
+    const FileAttributes ProtectedAttributes = FileAttributes.Hidden | FileAttributes.System;
+
     readonly ulong[] _frn;
     readonly ulong[] _parent;
     readonly uint[] _attributes;
     readonly string[] _names;
     readonly Dictionary<ulong, int> _byFrn;
+    readonly byte[] _flags;
 
     public char Drive { get; }
     public int Count => _names.Length;
@@ -34,7 +41,46 @@ public sealed class VolumeIndex
         _byFrn = new Dictionary<ulong, int>(frn.Length);
         for (int i = 0; i < frn.Length; i++)
             _byFrn[frn[i]] = i;
+
+        _flags = ComputeFlags();
     }
+
+    /// <summary>Propaga Orphan y SystemTree de padres a hijos; cada cadena se recorre una sola vez.</summary>
+    byte[] ComputeFlags()
+    {
+        var flags = new byte[_names.Length];
+        var pending = new Stack<int>();
+
+        for (int i = 0; i < flags.Length; i++)
+        {
+            if (flags[i] != 0) continue;
+
+            int current = i;
+            byte inherited;
+            while (true)
+            {
+                pending.Push(current);
+                ulong p = _parent[current];
+                if (p == RootFrn) { inherited = 0; break; }
+                if (pending.Count > MaxDepth || !_byFrn.TryGetValue(p, out int j)) { inherited = Orphan; break; }
+                if (flags[j] != 0) { inherited = (byte)(flags[j] & ~Computed); break; }
+                current = j;
+            }
+
+            // Se desapila del ancestro mas alto hacia abajo, heredando las marcas
+            while (pending.Count > 0)
+            {
+                int k = pending.Pop();
+                if ((GetAttributes(k) & ProtectedAttributes) == ProtectedAttributes) inherited |= SystemTree;
+                flags[k] = (byte)(inherited | Computed);
+            }
+        }
+
+        for (int i = 0; i < flags.Length; i++) flags[i] &= unchecked((byte)~Computed);
+        return flags;
+    }
+
+    internal bool IsSystem(int entry) => (_flags[entry] & SystemTree) != 0;
 
     public static VolumeIndex Build(char drive)
     {
@@ -144,11 +190,14 @@ public sealed class VolumeIndex
         return mask;
     }
 
-    internal void Search(string text, EntryKind kind, bool[]? mask, List<SearchResult> results, CancellationToken cancellationToken)
+    internal void Search(string text, EntryKind kind, bool[]? mask, bool includeSystem, List<SearchResult> results,
+        CancellationToken cancellationToken)
     {
+        byte hidden = includeSystem ? Orphan : (byte)(Orphan | SystemTree);
         for (int i = 0; i < _names.Length; i++)
         {
             if ((i & 0xFFFF) == 0) cancellationToken.ThrowIfCancellationRequested();
+            if ((_flags[i] & hidden) != 0) continue;
             if (mask is not null && !mask[i]) continue;
             if (kind != EntryKind.All && IsDirectory(i) != (kind == EntryKind.Directories)) continue;
             if (text.Length > 0 && !_names[i].Contains(text, StringComparison.OrdinalIgnoreCase)) continue;

@@ -10,10 +10,14 @@ public sealed class SearchScope
     /// <summary>Entradas dentro de la carpeta; null cuando la raiz es la unidad completa.</summary>
     internal bool[]? Mask { get; }
 
-    internal SearchScope(string rootPath, VolumeIndex volume, bool[]? mask)
+    /// <summary>La raiz esta dentro de una carpeta oculta + sistema, asi que su contenido se muestra igual.</summary>
+    internal bool IsSystem { get; }
+
+    internal SearchScope(string rootPath, VolumeIndex volume, bool[]? mask, bool isSystem)
     {
         RootPath = rootPath;
         Volume = volume;
         Mask = mask;
+        IsSystem = isSystem;
     }
 }

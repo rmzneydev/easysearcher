@@ -58,30 +58,30 @@ public sealed class FileIndex
 
         var relative = full[3..].TrimEnd('\\');
         if (relative.Length == 0)
-            return new SearchScope($@"{volume.Drive}:\", volume, null);
+            return new SearchScope($@"{volume.Drive}:\", volume, null, false);
 
         int entry = volume.FindDirectory(relative);
         if (entry < 0)
             throw new DirectoryNotFoundException($"No existe la carpeta: {full}");
 
-        return new SearchScope(volume.GetFullPath(entry), volume, volume.GetSubtreeMask(entry));
+        return new SearchScope(volume.GetFullPath(entry), volume, volume.GetSubtreeMask(entry), volume.IsSystem(entry));
     }
 
-    /// <summary>
-    /// Busca por subcadena en el nombre, sin distinguir mayusculas. Texto vacio devuelve todo.
-    /// Con <paramref name="scope"/> solo busca dentro de esa carpeta.
-    /// </summary>
-    public List<SearchResult> Search(string text, EntryKind kind = EntryKind.All, SearchScope? scope = null,
-        CancellationToken cancellationToken = default)
+    /// <summary>Busca por subcadena en el nombre, sin distinguir mayusculas. Texto vacio devuelve todo.</summary>
+    public List<SearchResult> Search(string text, SearchOptions? options = null, CancellationToken cancellationToken = default)
     {
+        options ??= new SearchOptions();
+        var scope = options.Scope;
+        bool includeSystem = options.IncludeSystem || scope?.IsSystem == true;
+
         var results = new List<SearchResult>();
         if (scope is not null)
         {
-            scope.Volume.Search(text, kind, scope.Mask, results, cancellationToken);
+            scope.Volume.Search(text, options.Kind, scope.Mask, includeSystem, results, cancellationToken);
             return results;
         }
         foreach (var volume in Volumes)
-            volume.Search(text, kind, null, results, cancellationToken);
+            volume.Search(text, options.Kind, null, includeSystem, results, cancellationToken);
         return results;
     }
 }

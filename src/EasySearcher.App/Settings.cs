@@ -12,6 +12,9 @@ sealed class Settings
     /// <summary>Carpeta raiz de las busquedas; null = todas las unidades.</summary>
     public string? RootPath { get; set; }
 
+    /// <summary>Mostrar archivos ocultos + sistema.</summary>
+    public bool IncludeSystem { get; set; }
+
     public static Settings Load()
     {
         try

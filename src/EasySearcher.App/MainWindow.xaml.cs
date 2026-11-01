@@ -22,6 +22,7 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         RootBox.Text = _settings.RootPath ?? "";
+        SystemBox.IsChecked = _settings.IncludeSystem;
         Loaded += async (_, _) => await BuildIndexAsync();
     }
 
@@ -99,13 +100,17 @@ public partial class MainWindow : Window
         }
 
         var cts = _searchCts = new CancellationTokenSource();
-        var scope = _scope;
-        var kind = (EntryKind)KindBox.SelectedIndex;
+        var options = new SearchOptions
+        {
+            Kind = (EntryKind)KindBox.SelectedIndex,
+            Scope = _scope,
+            IncludeSystem = SystemBox.IsChecked == true,
+        };
 
         try
         {
             var sw = Stopwatch.StartNew();
-            var results = await Task.Run(() => index.Search(text, kind, scope, cts.Token), cts.Token);
+            var results = await Task.Run(() => index.Search(text, options, cts.Token), cts.Token);
             if (cts.IsCancellationRequested) return;
 
             ResultsList.ItemsSource = results;
@@ -162,6 +167,13 @@ public partial class MainWindow : Window
     }
 
     async void KindBox_SelectionChanged(object sender, SelectionChangedEventArgs e) => await SearchAsync();
+
+    async void SystemBox_Click(object sender, RoutedEventArgs e)
+    {
+        _settings.IncludeSystem = SystemBox.IsChecked == true;
+        _settings.Save();
+        await SearchAsync();
+    }
 
     void QueryBox_PreviewKeyDown(object sender, KeyEventArgs e)
     {
