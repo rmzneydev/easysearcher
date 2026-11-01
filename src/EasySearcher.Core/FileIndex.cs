@@ -4,14 +4,19 @@ using System.ComponentModel;
 namespace EasySearcher.Core;
 
 /// <summary>Indice de varias unidades NTFS; cada una se lee en paralelo.</summary>
-public sealed class FileIndex
+public sealed class FileIndex : IDisposable
 {
+    CancellationTokenSource? _watchCts;
+
     public IReadOnlyList<VolumeIndex> Volumes { get; }
 
     /// <summary>Unidades que no se pudieron indexar y el motivo.</summary>
     public IReadOnlyDictionary<char, Exception> Failures { get; }
 
     public int Count => Volumes.Sum(v => v.Count);
+
+    /// <summary>Se dispara (en un hilo de fondo) cuando <see cref="StartWatching"/> aplica cambios al indice.</summary>
+    public event EventHandler? Changed;
 
     FileIndex(IReadOnlyList<VolumeIndex> volumes, IReadOnlyDictionary<char, Exception> failures)
     {
@@ -45,6 +50,46 @@ public sealed class FileIndex
         return new FileIndex(volumes.OfType<VolumeIndex>().ToArray(), failures);
     }
 
+    /// <summary>Aplica los cambios del USN Journal de todas las unidades. Devuelve true si algo cambio.</summary>
+    public bool Update()
+    {
+        bool changed = false;
+        foreach (var volume in Volumes)
+        {
+            try
+            {
+                changed |= volume.Update();
+            }
+            catch (Exception ex) when (ex is Win32Exception or IOException or UnauthorizedAccessException)
+            {
+                // La unidad pudo desmontarse; se reintenta en la siguiente vuelta
+            }
+        }
+        return changed;
+    }
+
+    /// <summary>Revisa el USN Journal cada <paramref name="interval"/> y dispara <see cref="Changed"/> si hubo cambios.</summary>
+    public void StartWatching(TimeSpan interval)
+    {
+        if (_watchCts is not null) return;
+        var cts = _watchCts = new CancellationTokenSource();
+
+        _ = Task.Run(async () =>
+        {
+            using var timer = new PeriodicTimer(interval);
+            try
+            {
+                while (await timer.WaitForNextTickAsync(cts.Token))
+                {
+                    if (Update()) Changed?.Invoke(this, EventArgs.Empty);
+                }
+            }
+            catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException)
+            {
+            }
+        });
+    }
+
     /// <summary>Prepara una busqueda limitada a <paramref name="rootPath"/> y sus subcarpetas.</summary>
     /// <exception cref="DirectoryNotFoundException">La unidad no esta indexada o la carpeta no existe en el indice.</exception>
     public SearchScope CreateScope(string rootPath)
@@ -56,15 +101,7 @@ public sealed class FileIndex
         var volume = Volumes.FirstOrDefault(v => v.Drive == char.ToUpperInvariant(full[0]))
             ?? throw new DirectoryNotFoundException($"La unidad {char.ToUpperInvariant(full[0])}: no esta indexada.");
 
-        var relative = full[3..].TrimEnd('\\');
-        if (relative.Length == 0)
-            return new SearchScope($@"{volume.Drive}:\", volume, null, false);
-
-        int entry = volume.FindDirectory(relative);
-        if (entry < 0)
-            throw new DirectoryNotFoundException($"No existe la carpeta: {full}");
-
-        return new SearchScope(volume.GetFullPath(entry), volume, volume.GetSubtreeMask(entry), volume.IsSystem(entry));
+        return volume.CreateScope(full[3..].TrimEnd('\\'));
     }
 
     /// <summary>Busca por subcadena en el nombre, sin distinguir mayusculas. Texto vacio devuelve todo.</summary>
@@ -72,16 +109,20 @@ public sealed class FileIndex
     {
         options ??= new SearchOptions();
         var scope = options.Scope;
-        bool includeSystem = options.IncludeSystem || scope?.IsSystem == true;
 
         var results = new List<SearchResult>();
-        if (scope is not null)
-        {
-            scope.Volume.Search(text, options.Kind, scope.Mask, includeSystem, results, cancellationToken);
-            return results;
-        }
         foreach (var volume in Volumes)
-            volume.Search(text, options.Kind, null, includeSystem, results, cancellationToken);
+        {
+            if (scope is null || scope.Volume == volume)
+                volume.Search(text, options.Kind, scope, options.IncludeSystem, results, cancellationToken);
+        }
         return results;
+    }
+
+    public void Dispose()
+    {
+        _watchCts?.Cancel();
+        foreach (var volume in Volumes)
+            volume.Dispose();
     }
 }

@@ -5,6 +5,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 using EasySearcher.Core;
 using Microsoft.Win32;
 
@@ -14,6 +15,7 @@ public partial class MainWindow : Window
 {
     readonly Settings _settings = Settings.Load();
     FileIndex? _index;
+    TimeSpan _buildTime;
     SearchScope? _scope;
     string? _appliedRoot;
     CancellationTokenSource? _searchCts;
@@ -24,6 +26,7 @@ public partial class MainWindow : Window
         RootBox.Text = _settings.RootPath ?? "";
         SystemBox.IsChecked = _settings.IncludeSystem;
         Loaded += async (_, _) => await BuildIndexAsync();
+        Closed += (_, _) => _index?.Dispose();
     }
 
     async Task BuildIndexAsync()
@@ -33,16 +36,35 @@ public partial class MainWindow : Window
 
         var sw = Stopwatch.StartNew();
         var index = await Task.Run(() => FileIndex.Build(drives));
+        _buildTime = sw.Elapsed;
         _index = index;
+        UpdateStatus();
 
-        var status = $"{index.Count:N0} entradas en {string.Join(" ", index.Volumes.Select(v => v.Drive + ":"))} " +
-                     $"({sw.Elapsed.TotalSeconds:N1} s)";
-        if (index.Failures.Count > 0)
-            status += "   |   No indexadas: " + string.Join("; ", index.Failures.Select(f => $"{f.Key}: {f.Value.Message}"));
-        StatusText.Text = status;
+        index.Changed += Index_Changed;
+        index.StartWatching(TimeSpan.FromSeconds(1));
 
         await ApplyRootAsync();
     }
+
+    void UpdateStatus()
+    {
+        if (_index is not { } index) return;
+
+        var status = $"{index.Count:N0} entradas en {string.Join(" ", index.Volumes.Select(v => v.Drive + ":"))} " +
+                     $"(indexado en {_buildTime.TotalSeconds:N1} s)";
+        var notLive = index.Volumes.Where(v => !v.IsLive).Select(v => v.Drive + ":").ToArray();
+        status += notLive.Length == 0 ? "  ·  actualizado en vivo" : $"  ·  sin actualizacion en vivo en {string.Join(" ", notLive)}";
+        if (index.Failures.Count > 0)
+            status += "   |   No indexadas: " + string.Join("; ", index.Failures.Select(f => $"{f.Key}: {f.Value.Message}"));
+        StatusText.Text = status;
+    }
+
+    // Llega desde el hilo que vigila el USN Journal
+    void Index_Changed(object? sender, EventArgs e) => Dispatcher.InvokeAsync(async () =>
+    {
+        UpdateStatus();
+        await SearchAsync(preserveView: true);
+    });
 
     /// <summary>Valida la carpeta de RootBox y la usa como raiz de las busquedas (vacio = todas las unidades).</summary>
     async Task ApplyRootAsync()
@@ -84,7 +106,9 @@ public partial class MainWindow : Window
         await ApplyRootAsync();
     }
 
-    async Task SearchAsync()
+    /// <param name="preserveView">Al refrescar por cambios en disco: no tocar la lista si los resultados son
+    /// los mismos y, si cambiaron, conservar la seleccion y la posicion del scroll.</param>
+    async Task SearchAsync(bool preserveView = false)
     {
         var index = _index;
         if (index is null) return;
@@ -113,12 +137,43 @@ public partial class MainWindow : Window
             var results = await Task.Run(() => index.Search(text, options, cts.Token), cts.Token);
             if (cts.IsCancellationRequested) return;
 
-            ResultsList.ItemsSource = results;
+            if (!preserveView)
+                ResultsList.ItemsSource = results;
+            else if (ResultsList.ItemsSource is not List<SearchResult> old || !old.SequenceEqual(results))
+                ReplaceResultsKeepingView(results);
             ResultText.Text = $"{results.Count:N0} resultados en {where}  ·  {sw.Elapsed.TotalMilliseconds:N0} ms";
         }
         catch (OperationCanceledException)
         {
         }
+    }
+
+    void ReplaceResultsKeepingView(List<SearchResult> results)
+    {
+        var scroll = FindDescendant<ScrollViewer>(ResultsList);
+        double offset = scroll?.VerticalOffset ?? 0;
+        var selected = Selected.ToHashSet();
+
+        ResultsList.ItemsSource = results;
+
+        if (selected.Count > 0)
+        {
+            foreach (var r in results)
+                if (selected.Contains(r)) ResultsList.SelectedItems.Add(r);
+        }
+        if (scroll is not null)
+            Dispatcher.InvokeAsync(() => scroll.ScrollToVerticalOffset(offset), DispatcherPriority.Loaded);
+    }
+
+    static T? FindDescendant<T>(DependencyObject parent) where T : DependencyObject
+    {
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, i);
+            if (child is T match) return match;
+            if (FindDescendant<T>(child) is { } found) return found;
+        }
+        return null;
     }
 
     void RootBox_TextChanged(object sender, TextChangedEventArgs e) =>

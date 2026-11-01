@@ -7,17 +7,21 @@ public sealed class SearchScope
 
     internal VolumeIndex Volume { get; }
 
-    /// <summary>Entradas dentro de la carpeta; null cuando la raiz es la unidad completa.</summary>
-    internal bool[]? Mask { get; }
+    /// <summary>Ruta de la carpeta sin la letra de unidad; vacia = todo el volumen.</summary>
+    internal string RelativePath { get; }
 
-    /// <summary>La raiz esta dentro de una carpeta oculta + sistema, asi que su contenido se muestra igual.</summary>
-    internal bool IsSystem { get; }
+    /// <summary>
+    /// Que entradas estan dentro de la carpeta, para la version del indice indicada.
+    /// Se reemplaza entera (nunca se modifica) para que las busquedas concurrentes la lean sin lock.
+    /// </summary>
+    internal MaskCache? Cache { get; set; }
 
-    internal SearchScope(string rootPath, VolumeIndex volume, bool[]? mask, bool isSystem)
+    internal sealed record MaskCache(int Generation, int Version, int RootEntry, bool[] Mask);
+
+    internal SearchScope(string rootPath, VolumeIndex volume, string relativePath)
     {
         RootPath = rootPath;
         Volume = volume;
-        Mask = mask;
-        IsSystem = isSystem;
+        RelativePath = relativePath;
     }
 }

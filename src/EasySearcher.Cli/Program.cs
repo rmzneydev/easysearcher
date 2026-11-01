@@ -1,7 +1,7 @@
 ﻿using System.Diagnostics;
 using EasySearcher.Core;
 
-// Uso: easysearch [-d C,D] [-r carpeta] [-k all|files|dirs] [-s] [-n 50] [texto]
+// Uso: easysearch [-d C,D] [-r carpeta] [-k all|files|dirs] [-s] [-n 50] [-w segundos] [texto]
 // Requiere ejecutarse como administrador.
 
 var drives = new List<char>();
@@ -10,6 +10,7 @@ int max = 50;
 string text = "";
 string? root = null;
 bool includeSystem = false;
+int watchSeconds = 0;
 
 for (int i = 0; i < args.Length; i++)
 {
@@ -24,6 +25,9 @@ for (int i = 0; i < args.Length; i++)
         case "-s" or "--system":
             includeSystem = true;
             break;
+        case "-w" or "--watch":
+            watchSeconds = int.Parse(args[++i]);
+            break;
         case "-k" or "--kind":
             kind = args[++i].ToLowerInvariant() switch
             {
@@ -36,7 +40,7 @@ for (int i = 0; i < args.Length; i++)
             max = int.Parse(args[++i]);
             break;
         case "-h" or "--help":
-            Console.WriteLine("Uso: easysearch [-d C,D] [-r carpeta] [-k all|files|dirs] [-s (incluir sistema)] [-n 50 (0 = todos)] [texto]");
+            Console.WriteLine("Uso: easysearch [-d C,D] [-r carpeta] [-k all|files|dirs] [-s (incluir sistema)] [-n 50 (0 = todos)] [-w segundos (vigilar cambios)] [texto]");
             return 0;
         default:
             text = args[i];
@@ -70,14 +74,39 @@ if (root is not null)
     Console.Error.WriteLine($"Raiz: {scope.RootPath} ({sw.Elapsed.TotalMilliseconds:N0} ms)");
 }
 
+var options = new SearchOptions { Kind = kind, Scope = scope, IncludeSystem = includeSystem };
 sw.Restart();
-var results = index.Search(text, new SearchOptions { Kind = kind, Scope = scope, IncludeSystem = includeSystem });
+var results = index.Search(text, options);
 var searchMs = sw.Elapsed.TotalMilliseconds;
 
 foreach (var r in max > 0 ? results.Take(max) : results)
-    Console.WriteLine(r.IsDirectory ? $"[D] {r.FullPath}" : $"    {r.FullPath}");
+    Console.WriteLine(Format(r));
 
 Console.Error.WriteLine($"\n{results.Count:N0} coincidencias en {searchMs:N1} ms" +
     (max > 0 && results.Count > max ? $" (mostrando {max}; usa -n 0 para ver todas)" : ""));
 
+if (watchSeconds > 0)
+{
+    // Muestra lo que entra (+) y sale (-) de los resultados a medida que cambia el disco
+    Console.Error.WriteLine($"Vigilando cambios durante {watchSeconds} s...");
+    var current = results.Select(Format).ToHashSet();
+    var until = DateTime.UtcNow.AddSeconds(watchSeconds);
+    while (DateTime.UtcNow < until)
+    {
+        Thread.Sleep(500);
+        sw.Restart();
+        if (!index.Update()) continue;
+        var updateMs = sw.Elapsed.TotalMilliseconds;
+
+        var next = index.Search(text, options).Select(Format).ToHashSet();
+        foreach (var line in current.Except(next)) Console.WriteLine($"- {line}");
+        foreach (var line in next.Except(current)) Console.WriteLine($"+ {line}");
+        Console.Error.WriteLine($"  (cambios aplicados en {updateMs:N1} ms; {next.Count:N0} coincidencias)");
+        current = next;
+    }
+}
+
+index.Dispose();
 return index.Volumes.Count > 0 ? 0 : 1;
+
+static string Format(SearchResult r) => r.IsDirectory ? $"[D] {r.FullPath}" : $"    {r.FullPath}";
