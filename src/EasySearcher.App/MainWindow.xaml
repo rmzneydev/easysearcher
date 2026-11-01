@@ -61,9 +61,14 @@
                        Margin="9,0" VerticalAlignment="Center" IsHitTestVisible="False" />
             <ComboBox x:Name="KindBox" Grid.Column="1" Width="110" Margin="8,0,0,0" SelectedIndex="0"
                       VerticalContentAlignment="Center" SelectionChanged="KindBox_SelectionChanged">
+                <!-- Mismo orden que el enum EntryKind -->
                 <ComboBoxItem Content="Todo" />
                 <ComboBoxItem Content="Archivos" />
                 <ComboBoxItem Content="Carpetas" />
+                <ComboBoxItem Content="Imágenes" />
+                <ComboBoxItem Content="Videos" />
+                <ComboBoxItem Content="Música" />
+                <ComboBoxItem Content="Documentos" />
             </ComboBox>
         </Grid>
 

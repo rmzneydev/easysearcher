@@ -547,6 +547,9 @@ public sealed class VolumeIndex : IDisposable
             byte hidden = includeSystem ? (byte)(Empty | Orphan) : (byte)(Empty | Orphan | SystemTree);
             bool filterKind = kind != EntryKind.All;
             bool wantDirectories = kind == EntryKind.Directories;
+            var category = FileCategories.GetLookup(kind);
+            bool filterExtension = category.HasValue;
+            var extensions = category.GetValueOrDefault();
 
             for (int i = 0; i < names.Length; i++)
             {
@@ -554,6 +557,7 @@ public sealed class VolumeIndex : IDisposable
                 if ((flags[i] & hidden) != 0) continue;
                 if (mask is not null && !mask[i]) continue;
                 if (filterKind && ((attributes[i] & (uint)FileAttributes.Directory) != 0) != wantDirectories) continue;
+                if (filterExtension && !extensions.Contains(FileCategories.GetExtension(names[i]))) continue;
                 if (text.Length > 0 && !names[i].Contains(text, StringComparison.OrdinalIgnoreCase)) continue;
                 results.Add(new SearchResult(this, i));
             }

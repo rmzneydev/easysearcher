@@ -28,9 +28,9 @@ public static class Protocol
     /// <summary>
     /// Version de lo que entiende el motor. Un servicio instalado mas viejo ignora los campos nuevos sin
     /// avisar, asi que la app la compara antes de usarlos.
-    /// 1 = 0.1.0; 2 = filtro por fecha de modificacion.
+    /// 1 = 0.1.0; 2 = filtro por fecha de modificacion; 3 = categorias de EntryKind (imagenes, videos...).
     /// </summary>
-    public const int Version = 2;
+    public const int Version = 3;
 }
 
 /// <param name="Ready">False mientras se construye el indice.</param>

@@ -177,12 +177,17 @@ public partial class MainWindow : Window
             : $"  ·  sin actualizacion en vivo en {string.Join(" ", status.NotLive.Select(d => d + ":"))}";
         if (status.Failures.Length > 0)
             text += "   |   No indexadas: " + string.Join("; ", status.Failures);
-        if (!DateFilterEnabled)
-            text += "   |   El servicio instalado es una version anterior: actualiza EasySearcher para filtrar por fecha";
+        if (!ServiceUpToDate)
+            text += "   |   El servicio instalado es una version anterior: actualiza EasySearcher para filtrar por fecha o por tipo";
         StatusText.Text = text + source;
 
-        DateBox.IsEnabled = DateFilterEnabled;
-        DateBox.ToolTip = DateFilterEnabled ? "Fecha de modificacion" : "Requiere actualizar el servicio de EasySearcher";
+        DateBox.IsEnabled = ServiceUpToDate;
+        DateBox.ToolTip = ServiceUpToDate ? "Fecha de modificacion" : "Requiere actualizar el servicio de EasySearcher";
+        // Las categorias (Imagenes, Videos...) tampoco las entiende un servicio anterior
+        for (int i = (int)EntryKind.Images; i < KindBox.Items.Count; i++)
+            ((ComboBoxItem)KindBox.Items[i]).IsEnabled = ServiceUpToDate;
+        if (!ServiceUpToDate && KindBox.SelectedIndex >= (int)EntryKind.Images)
+            KindBox.SelectedIndex = (int)EntryKind.All;
     }
 
     bool IsReady => _service is not null && _status is { Ready: true };
@@ -235,7 +240,7 @@ public partial class MainWindow : Window
         string text = QueryBox.Text.Trim();
         string where = _appliedRoot ?? "todas las unidades";
 
-        var preset = DateFilterEnabled ? (DatePreset)DateBox.SelectedIndex : DatePreset.Any;
+        var preset = ServiceUpToDate ? (DatePreset)DateBox.SelectedIndex : DatePreset.Any;
         var (from, to) = DateFilter.GetRange(preset, FromDate.SelectedDate, ToDate.SelectedDate, DateTime.Now);
         string dateText = DateFilter.Describe(preset, FromDate.SelectedDate, ToDate.SelectedDate);
         if (dateText.Length > 0) where += $", {dateText}";
@@ -398,8 +403,8 @@ public partial class MainWindow : Window
 
     async void KindBox_SelectionChanged(object sender, SelectionChangedEventArgs e) => await SearchAsync();
 
-    /// <summary>Un servicio instalado anterior al filtro de fecha lo ignoraria sin avisar.</summary>
-    bool DateFilterEnabled => _status is null || _status.ProtocolVersion >= Protocol.Version;
+    /// <summary>Un servicio instalado anterior ignoraria sin avisar el filtro de fecha y las categorias.</summary>
+    bool ServiceUpToDate => _status is null || _status.ProtocolVersion >= Protocol.Version;
 
     async void DateBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {

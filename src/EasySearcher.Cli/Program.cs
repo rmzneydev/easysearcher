@@ -69,6 +69,10 @@ for (int i = 0; i < args.Length; i++)
             {
                 "files" or "f" => EntryKind.Files,
                 "dirs" or "d" => EntryKind.Directories,
+                "images" => EntryKind.Images,
+                "videos" => EntryKind.Videos,
+                "audio" => EntryKind.Audio,
+                "docs" => EntryKind.Documents,
                 _ => EntryKind.All,
             };
             break;
@@ -76,7 +80,7 @@ for (int i = 0; i < args.Length; i++)
             max = int.Parse(args[++i]);
             break;
         case "-h" or "--help":
-            Console.WriteLine("Uso: easysearch [-d C,D] [-r carpeta] [-k all|files|dirs] [-s (incluir sistema)] [-n 50 (0 = todos)]");
+            Console.WriteLine("Uso: easysearch [-d C,D] [-r carpeta] [-k all|files|dirs|images|videos|audio|docs] [-s (incluir sistema)] [-n 50 (0 = todos)]");
             Console.WriteLine("                  [-o name|folder|size|date[-]] [-l (tamano y fecha)] [-w segundos (vigilar cambios)]");
             Console.WriteLine("                  [--from aaaa-mm-dd] [--to aaaa-mm-dd] [--service] [texto]");
             return 0;
@@ -195,9 +199,10 @@ int QueryService()
         Console.Error.WriteLine($"Servicio: {status.Entries:N0} entradas en {string.Join(" ", status.Drives)}");
 
         var sw = Stopwatch.StartNew();
-        if ((modifiedFrom is not null || modifiedTo is not null) && status.ProtocolVersion < Protocol.Version)
+        if ((modifiedFrom is not null || modifiedTo is not null || kind > EntryKind.Directories) &&
+            status.ProtocolVersion < Protocol.Version)
         {
-            Console.Error.WriteLine("ERROR: el servicio instalado es una version anterior y no filtra por fecha.");
+            Console.Error.WriteLine("ERROR: el servicio instalado es una version anterior y no filtra por fecha ni por tipo.");
             return 1;
         }
         var response = client.Search(new SearchRequest(text, kind, root, includeSystem, sort, descending,
