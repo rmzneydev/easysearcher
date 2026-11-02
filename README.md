@@ -119,6 +119,26 @@ En esta máquina el SDK está en `D:\Programs\dotnet` y los paquetes NuGet en
 > El servicio de desarrollo corre como SYSTEM desde una carpeta en la que el usuario puede escribir.
 > Sirve para desarrollar en un equipo propio; el instalador lo coloca en `Program Files`.
 
+### Desarrollar con la versión instalada
+
+El servicio instalado y el de desarrollo se llaman igual (`EasySearcher`), así que **solo uno puede estar
+registrado a la vez**. Con EasySearcher instalado:
+
+- **Cambios en la interfaz (app):** se prueban con la app de desarrollo
+  (`src\EasySearcher.App\bin\Debug\net10.0-windows\EasySearcher.exe`), que habla con el servicio instalado.
+  **Antes hay que cerrar la app instalada**: las dos comparten la instancia única, y si la instalada está
+  abierta, la de desarrollo le pasa sus argumentos y se cierra.
+- **Cambios en el motor o el servicio (`EasySearcher.Core`, `EasySearcher.Service`):** hay que volver a
+  apuntar el servicio a `artifacts\service` (paso 1 de arriba), y eso **reemplaza el servicio instalado**.
+  La app instalada sigue funcionando contra el servicio de desarrollo. Después, `tools\update-dev-service.ps1`
+  como siempre.
+- **Volver a la versión instalada:** reinstalar con el instalador (`artifacts\installer\EasySearcherSetup-<versión>.exe`),
+  que vuelve a registrar el servicio desde `Program Files`.
+- **Clic derecho:** el de desarrollo (HKCU) tiene prioridad sobre el del instalador (HKLM). Si se registra
+  el de desarrollo, se quita con `tools\context-menu.ps1 uninstall` para volver al instalado.
+- Si un cambio agrega campos al protocolo, una app nueva con un servicio viejo deshabilita lo que este no
+  entiende (ver `Protocol.Version`); no es un error, falta actualizar el servicio.
+
 ### CLI
 
 ```powershell
