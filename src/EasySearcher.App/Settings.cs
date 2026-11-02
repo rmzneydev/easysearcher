@@ -29,6 +29,9 @@ sealed class Settings
 
     public ViewMode ViewMode { get; set; } = ViewMode.Details;
 
+    /// <summary>Guardar las busquedas que se usan (ver SearchHistory).</summary>
+    public bool HistoryEnabled { get; set; } = true;
+
     public static Settings Load()
     {
         try

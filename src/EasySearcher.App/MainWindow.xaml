@@ -127,11 +127,43 @@
             <CheckBox x:Name="SystemBox" Grid.Column="5" Content="Sistema" Margin="10,0,0,0" VerticalAlignment="Center"
                       ToolTip="Incluir archivos ocultos de sistema (System Volume Information, $Recycle.Bin, desktop.ini...)"
                       Click="SystemBox_Click" />
-            <TextBox x:Name="QueryBox" FontSize="15" Padding="6,4" VerticalContentAlignment="Center"
+            <TextBox x:Name="QueryBox" FontSize="15" Padding="6,4,34,4" VerticalContentAlignment="Center"
                      TextChanged="QueryBox_TextChanged" PreviewKeyDown="QueryBox_PreviewKeyDown"
                      ToolTip="linkin mp3 : contiene ambas palabras&#10;&quot;linkin park&quot; : texto exacto&#10;*.mp3, foto_??.jpg : comodines contra el nombre completo&#10;!temp : excluye" />
             <TextBlock x:Name="QueryPlaceholder" Text="Escribe para buscar...   (varias palabras, *.mp3, !excluir)" Foreground="Gray" FontSize="15"
                        Margin="9,0" VerticalAlignment="Center" IsHitTestVisible="False" />
+            <!-- Boton de busquedas recientes, dentro del campo a la derecha -->
+            <Button x:Name="HistoryButton" Content="&#xE81C;" FontFamily="Segoe MDL2 Assets" Width="30" Margin="0,2,2,2"
+                    HorizontalAlignment="Right" Background="Transparent" BorderThickness="0" Cursor="Hand"
+                    ToolTip="Búsquedas recientes (↓ con el campo vacío)" Click="HistoryButton_Click" />
+
+            <!-- Busquedas recientes: Enter o clic restaura, Shift+Supr borra, Esc cierra -->
+            <Popup x:Name="HistoryPopup" PlacementTarget="{Binding ElementName=QueryBox}" Placement="Bottom"
+                   StaysOpen="False" AllowsTransparency="True"
+                   Width="{Binding ActualWidth, ElementName=QueryBox}">
+                <Border Background="{DynamicResource {x:Static SystemColors.WindowBrushKey}}" BorderBrush="Gray" BorderThickness="1">
+                    <DockPanel>
+                        <DockPanel DockPanel.Dock="Bottom" Margin="6,4">
+                            <Button Content="Borrar historial" DockPanel.Dock="Right" Padding="8,2" Click="ClearHistory_Click" />
+                            <CheckBox x:Name="HistoryEnabledBox" Content="Guardar historial" VerticalAlignment="Center"
+                                      Click="HistoryEnabledBox_Click" />
+                        </DockPanel>
+                        <TextBlock x:Name="HistoryEmpty" DockPanel.Dock="Top" Margin="8,6" Foreground="Gray"
+                                   Text="Las búsquedas aparecen aquí cuando abres, copias o arrastras un resultado." TextWrapping="Wrap" />
+                        <ListBox x:Name="HistoryList" MaxHeight="320" BorderThickness="0"
+                                 MouseUp="HistoryList_MouseUp" KeyDown="HistoryList_KeyDown">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Margin="2,3">
+                                        <TextBlock Text="{Binding Title}" FontWeight="SemiBold" />
+                                        <TextBlock Text="{Binding Description}" Foreground="Gray" FontSize="11" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </DockPanel>
+                </Border>
+            </Popup>
             <ComboBox x:Name="KindBox" Grid.Column="1" Width="110" Margin="8,0,0,0" SelectedIndex="0"
                       VerticalContentAlignment="Center" SelectionChanged="KindBox_SelectionChanged">
                 <!-- Mismo orden que el enum EntryKind -->

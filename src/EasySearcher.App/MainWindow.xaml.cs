@@ -15,6 +15,8 @@ namespace EasySearcher.App;
 public partial class MainWindow : Window
 {
     readonly Settings _settings = Settings.Load();
+    readonly SearchHistory _history = SearchHistory.Load();
+    bool _applyingHistory;
     readonly Dictionary<GridViewColumn, (SortColumn Sort, string Title)> _columns;
     readonly GridView _detailsView;
     readonly ItemsPanelTemplate _detailsPanel;
@@ -39,6 +41,7 @@ public partial class MainWindow : Window
         RootBox.Text = args.Root ?? _settings.RootPath ?? "";
         QueryBox.Text = args.Query ?? "";
         SystemBox.IsChecked = _settings.IncludeSystem;
+        HistoryEnabledBox.IsChecked = _settings.HistoryEnabled;
 
         _columns = new()
         {
@@ -264,6 +267,8 @@ public partial class MainWindow : Window
     /// los mismos y, si cambiaron, conservar la seleccion y la posicion del scroll.</param>
     async Task SearchAsync(bool preserveView = false)
     {
+        // Al restaurar una busqueda del historial se cambian varios controles; se busca una vez al final
+        if (_applyingHistory) return;
         if (!IsReady || !_rootApplied || _service is not { } service) return;
 
         int version = ++_searchVersion;
@@ -441,7 +446,113 @@ public partial class MainWindow : Window
     async void QueryBox_TextChanged(object sender, TextChangedEventArgs e)
     {
         QueryPlaceholder.Visibility = QueryBox.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+        // Con la lista de recientes abierta, lo que se escribe la filtra
+        if (HistoryPopup.IsOpen) ShowHistory();
         await SearchAsync();
+    }
+
+    /// <summary>
+    /// Guarda la busqueda actual con todo su contexto. Se llama al usar un resultado (abrir, abrir la
+    /// carpeta, copiar o arrastrar): es la senal de que la busqueda sirvio.
+    /// </summary>
+    void RecordHistory()
+    {
+        if (!_settings.HistoryEnabled || !_rootApplied) return;
+        var entry = new HistoryEntry(
+            QueryBox.Text.Trim(),
+            _appliedRoot,
+            (EntryKind)KindBox.SelectedIndex,
+            (DatePreset)DateBox.SelectedIndex,
+            FromDate.SelectedDate,
+            ToDate.SelectedDate,
+            (SizePreset)SizeBox.SelectedIndex) { LastUsed = DateTime.Now };
+        if (entry.Text.Length == 0 && entry.Date == DatePreset.Any && entry.Size == SizePreset.Any) return;
+        _history.Add(entry);
+    }
+
+    /// <summary>Abre (o actualiza) la lista de busquedas recientes que contienen el texto escrito.</summary>
+    void ShowHistory()
+    {
+        var entries = _history.Matching(QueryBox.Text.Trim());
+        HistoryList.ItemsSource = entries;
+        HistoryList.Visibility = entries.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        HistoryEmpty.Visibility = entries.Count > 0 ? Visibility.Collapsed : Visibility.Visible;
+        HistoryEmpty.Text = !_settings.HistoryEnabled ? "El historial esta desactivado."
+            : _history.Entries.Count == 0 ? "Las búsquedas aparecen aquí cuando abres, copias o arrastras un resultado."
+            : "Ninguna búsqueda reciente contiene ese texto.";
+        if (entries.Count > 0 && HistoryList.SelectedIndex < 0) HistoryList.SelectedIndex = 0;
+        HistoryPopup.IsOpen = true;
+    }
+
+    /// <summary>Restaura una busqueda del historial (texto, carpeta y filtros) y la ejecuta.</summary>
+    async Task ApplyHistoryAsync(HistoryEntry entry)
+    {
+        HistoryPopup.IsOpen = false;
+        _applyingHistory = true;
+        try
+        {
+            KindBox.SelectedIndex = (int)entry.Kind;
+            DateBox.SelectedIndex = (int)entry.Date;
+            FromDate.SelectedDate = entry.CustomFrom;
+            ToDate.SelectedDate = entry.CustomTo;
+            SizeBox.SelectedIndex = (int)entry.Size;
+            QueryBox.Text = entry.Text;
+            RootBox.Text = entry.Root ?? "";
+        }
+        finally
+        {
+            _applyingHistory = false;
+        }
+        QueryBox.Focus();
+        QueryBox.CaretIndex = QueryBox.Text.Length;
+
+        // Fuerza a validar la carpeta (pudo dejar de existir) y buscar
+        _rootApplied = false;
+        await ApplyRootAsync();
+    }
+
+    void HistoryButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (HistoryPopup.IsOpen) HistoryPopup.IsOpen = false;
+        else ShowHistory();
+        QueryBox.Focus();
+    }
+
+    async void HistoryList_MouseUp(object sender, MouseButtonEventArgs e)
+    {
+        if (FindAncestor<ListBoxItem>(e.OriginalSource as DependencyObject) is { Content: HistoryEntry entry })
+            await ApplyHistoryAsync(entry);
+    }
+
+    async void HistoryList_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter && HistoryList.SelectedItem is HistoryEntry entry)
+        {
+            e.Handled = true;
+            await ApplyHistoryAsync(entry);
+        }
+    }
+
+    void RemoveSelectedHistory()
+    {
+        if (HistoryList.SelectedItem is not HistoryEntry entry) return;
+        int index = HistoryList.SelectedIndex;
+        _history.Remove(entry);
+        ShowHistory();
+        HistoryList.SelectedIndex = Math.Min(index, HistoryList.Items.Count - 1);
+    }
+
+    void ClearHistory_Click(object sender, RoutedEventArgs e)
+    {
+        _history.Clear();
+        ShowHistory();
+    }
+
+    void HistoryEnabledBox_Click(object sender, RoutedEventArgs e)
+    {
+        _settings.HistoryEnabled = HistoryEnabledBox.IsChecked == true;
+        _settings.Save();
+        ShowHistory();
     }
 
     async void KindBox_SelectionChanged(object sender, SelectionChangedEventArgs e) => await SearchAsync();
@@ -506,10 +617,41 @@ public partial class MainWindow : Window
         await SearchAsync();
     }
 
-    void QueryBox_PreviewKeyDown(object sender, KeyEventArgs e)
+    async void QueryBox_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        // Con la lista de recientes abierta, las flechas, Enter y Esc son para ella
+        if (HistoryPopup.IsOpen)
+        {
+            switch (e.Key)
+            {
+                case Key.Down or Key.Up when HistoryList.Items.Count > 0:
+                    int step = e.Key == Key.Down ? 1 : -1;
+                    HistoryList.SelectedIndex = Math.Clamp(HistoryList.SelectedIndex + step, 0, HistoryList.Items.Count - 1);
+                    HistoryList.ScrollIntoView(HistoryList.SelectedItem);
+                    e.Handled = true;
+                    return;
+                case Key.Enter when HistoryList.SelectedItem is HistoryEntry entry:
+                    e.Handled = true;
+                    await ApplyHistoryAsync(entry);
+                    return;
+                case Key.Delete when Keyboard.Modifiers == ModifierKeys.Shift:
+                    RemoveSelectedHistory();
+                    e.Handled = true;
+                    return;
+                case Key.Escape:
+                    HistoryPopup.IsOpen = false;
+                    e.Handled = true;
+                    return;
+            }
+        }
+
         switch (e.Key)
         {
+            // Con el campo vacio, abajo abre las busquedas recientes
+            case Key.Down when QueryBox.Text.Length == 0:
+                ShowHistory();
+                e.Handled = true;
+                break;
             case Key.Down when ResultsList.Items.Count > 0:
                 ResultsList.SelectedIndex = 0;
                 ResultsList.ScrollIntoView(ResultsList.SelectedItem);
@@ -518,6 +660,7 @@ public partial class MainWindow : Window
                 break;
             case Key.Enter when ResultsList.Items.Count > 0:
                 var first = (ResultRow)ResultsList.Items[0];
+                RecordHistory();
                 if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) Shell.ShowInFolder(first.FullPath);
                 else Shell.Open(first.FullPath);
                 e.Handled = true;
@@ -588,7 +731,8 @@ public partial class MainWindow : Window
         data.SetData(DataFormats.UnicodeText, string.Join(Environment.NewLine, paths));
 
         // Copiar, mover o acceso directo: decide el destino, igual que entre ventanas del Explorador
-        DragDrop.DoDragDrop(ResultsList, data, DragDropEffects.Copy | DragDropEffects.Move | DragDropEffects.Link);
+        var effect = DragDrop.DoDragDrop(ResultsList, data, DragDropEffects.Copy | DragDropEffects.Move | DragDropEffects.Link);
+        if (effect != DragDropEffects.None) RecordHistory();
     }
 
     void ResultsList_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
@@ -614,7 +758,10 @@ public partial class MainWindow : Window
     void ResultItem_DoubleClick(object sender, MouseButtonEventArgs e)
     {
         if (sender is ListViewItem { Content: ResultRow row })
+        {
+            RecordHistory();
             Shell.Open(row.FullPath);
+        }
     }
 
     void OpenMenu_Click(object sender, RoutedEventArgs e) => OpenSelected();
@@ -629,6 +776,8 @@ public partial class MainWindow : Window
 
     void OpenSelected()
     {
+        if (!Selected.Any()) return;
+        RecordHistory();
         // Limite para no abrir cientos de ventanas por accidente
         foreach (var r in Selected.Take(10))
             Shell.Open(r.FullPath);
@@ -636,14 +785,16 @@ public partial class MainWindow : Window
 
     void ShowSelectedInFolder()
     {
-        if (ResultsList.SelectedItem is ResultRow r)
-            Shell.ShowInFolder(r.FullPath);
+        if (ResultsList.SelectedItem is not ResultRow r) return;
+        RecordHistory();
+        Shell.ShowInFolder(r.FullPath);
     }
 
-    static void CopyToClipboard(IEnumerable<string> lines)
+    void CopyToClipboard(IEnumerable<string> lines)
     {
         var text = string.Join(Environment.NewLine, lines);
         if (text.Length == 0) return;
+        RecordHistory();
         try
         {
             Clipboard.SetText(text);
