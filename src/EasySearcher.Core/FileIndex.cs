@@ -92,6 +92,10 @@ public sealed class FileIndex : IDisposable
             {
             }
         }
+
+        // La lectura deja ~50 MB temporales (arreglos intermedios, bufer de lectura): se devuelven al sistema
+        GCSettings.LargeObjectHeapCompactionMode = GCLargeObjectHeapCompactionMode.CompactOnce;
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
         return filled;
     }
 

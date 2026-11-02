@@ -130,6 +130,18 @@ if (memory)
     int unique = names.Distinct().Count();
     Console.Error.WriteLine($"Nombres: {names.Count:N0} ({unique:N0} distintos), {chars:N0} caracteres, " +
                             $"promedio {chars / (double)names.Count:N1}");
+
+    // Memoria tras leer tamano y fecha de la $MFT, antes y despues de compactar
+    names = null!;
+    all = null!;
+    index.LoadDetailsFromMft();
+    process.Refresh();
+    Console.Error.WriteLine($"Tras leer la $MFT: gestionada {GC.GetTotalMemory(false) / 1048576.0:N1} MB, " +
+                            $"privada {process.PrivateMemorySize64 / 1048576.0:N1} MB");
+    GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+    process.Refresh();
+    Console.Error.WriteLine($"Tras compactar:    gestionada {GC.GetTotalMemory(false) / 1048576.0:N1} MB, " +
+                            $"privada {process.PrivateMemorySize64 / 1048576.0:N1} MB");
 }
 
 if (verifyMft)
