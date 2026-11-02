@@ -32,9 +32,10 @@ Console.WriteLine($"{output}: {string.Join(", ", sizes)} px");
 
 static byte[] Render(int size)
 {
-    // Como pide el diseno, a 24 px o menos queda solo la lupa sobre el tile, con trazos algo mas gruesos
-    bool detailed = size > 24;
-    double strokeBoost = detailed ? 1.0 : 1.25;
+    // El diseno original dejaba solo la lupa a 24 px o menos; se prefirio el rayo tambien en tamanos chicos.
+    // Para volver a eso: detailed = size > 24 y strokeBoost = 1.25 cuando no es detailed.
+    bool detailed = true;
+    double strokeBoost = 1.0;
     var scale = new ScaleTransform(size / 256.0, size / 256.0);
 
     var center = new Point(114, 114);
