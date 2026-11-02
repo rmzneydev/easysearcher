@@ -167,3 +167,7 @@ desinstalar, quita todo.
 ## Licencias de terceros
 
 - [VirtualizingWrapPanel](https://github.com/sbaeumlisberger/VirtualizingWrapPanel), de S. Bäumlisberger: licencia MIT.
+- .NET (runtime, WPF, `Microsoft.Extensions.*`), incluido en el instalador: licencia MIT, .NET Foundation.
+
+Los textos completos están en `installer/THIRD-PARTY-NOTICES.txt`, que el instalador copia a la carpeta
+de instalación. Si se agrega otra dependencia, hay que sumar su aviso ahí.
