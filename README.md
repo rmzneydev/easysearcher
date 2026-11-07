@@ -20,6 +20,10 @@ actualiza en vivo con el USN Journal. Encuentra cualquier archivo o carpeta mien
   miniaturas, las mismas del Explorador.
 - Arrastrar y soltar resultados a otras aplicaciones, abrir, abrir la carpeta contenedora y copiar
   la ruta.
+- Uso con teclado: Enter abre la fila marcada (la primera al buscar), Ctrl+Enter abre su carpeta, ↓ entra
+  en los resultados, Ctrl+L o Esc vuelven al campo de búsqueda y escribir desde la lista sigue la búsqueda.
+- Con la lista vacía explica por qué (sin resultados, indexando, sin servicio) y ofrece quitar filtros,
+  buscar en todas las unidades o repetir una búsqueda reciente.
 - Oculta por defecto los metarchivos de NTFS y los archivos protegidos del sistema.
 
 ## Sintaxis de búsqueda

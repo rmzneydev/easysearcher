@@ -10,7 +10,7 @@ public class SearchHistoryTests : IDisposable
 
     public void Dispose() => File.Delete(_path);
 
-    static HistoryEntry Entry(string text, DateTime used, string? root = @"D:\Musica",
+    static SearchState Entry(string text, DateTime used, string? root = @"D:\Musica",
         EntryKind kind = EntryKind.All, DatePreset date = DatePreset.Any, SizeCriterion size = default) =>
         new(text, root, kind, date, null, null, size) { LastUsed = used };
 
@@ -76,7 +76,7 @@ public class SearchHistoryTests : IDisposable
     public void Survives_a_restart_with_its_whole_context()
     {
         var history = SearchHistory.Load(_path);
-        history.Add(new HistoryEntry("*.jpg", @"D:\Fotos", EntryKind.Images, DatePreset.Custom,
+        history.Add(new SearchState("*.jpg", @"D:\Fotos", EntryKind.Images, DatePreset.Custom,
             new DateTime(2024, 1, 1), new DateTime(2024, 12, 31), new SizeCriterion(SizeMode.Smaller, 128, SizeUnit.MB)) { LastUsed = T0 });
 
         var reloaded = SearchHistory.Load(_path).Entries.Single();

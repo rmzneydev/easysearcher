@@ -65,9 +65,9 @@ static class SizeFilter
     /// <summary>Texto para la barra de estado y el historial.</summary>
     public static string Describe(SizeCriterion size) => size.Mode switch
     {
-        SizeMode.Larger => $"de mas de {FormatValue(size.Value)} {size.Unit}",
+        SizeMode.Larger => $"de más de {FormatValue(size.Value)} {size.Unit}",
         SizeMode.Smaller => $"de menos de {FormatValue(size.Value)} {size.Unit}",
-        SizeMode.Empty => "vacios",
+        SizeMode.Empty => "vacíos",
         _ => "",
     };
 

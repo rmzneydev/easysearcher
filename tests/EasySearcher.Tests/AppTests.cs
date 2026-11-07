@@ -151,8 +151,42 @@ public class SizeFilterTests
     [Fact]
     public void Describe_reads_like_the_filter()
     {
-        Assert.Equal("de mas de 100 MB", SizeFilter.Describe(new SizeCriterion(SizeMode.Larger, 100, SizeUnit.MB)));
+        Assert.Equal("de más de 100 MB", SizeFilter.Describe(new SizeCriterion(SizeMode.Larger, 100, SizeUnit.MB)));
         Assert.Equal("de menos de 2 GB", SizeFilter.Describe(new SizeCriterion(SizeMode.Smaller, 2, SizeUnit.GB)));
-        Assert.Equal("vacios", SizeFilter.Describe(new SizeCriterion(SizeMode.Empty)));
+        Assert.Equal("vacíos", SizeFilter.Describe(new SizeCriterion(SizeMode.Empty)));
+    }
+}
+
+public class PathTrimmerTests
+{
+    // Un caracter = una unidad de ancho
+    static string Trim(string path, double width) => PathTrimmer.Trim(path, width, t => t.Length);
+
+    const string Sample = @"D:\Neyder\CMP\backend\src\modules\clients\presentation\dtos";
+
+    [Fact]
+    public void A_path_that_fits_stays_whole()
+    {
+        Assert.Equal(Sample, Trim(Sample, Sample.Length));
+    }
+
+    [Fact]
+    public void Trims_the_middle_at_folder_boundaries_keeping_as_much_of_the_end_as_fits()
+    {
+        Assert.Equal(@"D:\Neyder\…\clients\presentation\dtos", Trim(Sample, 40));
+        Assert.Equal(@"D:\Neyder\…\presentation\dtos", Trim(Sample, 32));
+    }
+
+    [Fact]
+    public void A_very_narrow_cell_keeps_the_end_of_the_path()
+    {
+        Assert.Equal(@"…on\dtos", Trim(Sample, 8));
+    }
+
+    [Fact]
+    public void Short_paths_and_empty_text_do_not_fail()
+    {
+        Assert.Equal("", Trim("", 10));
+        Assert.Equal("…", Trim(@"D:\", 1));
     }
 }

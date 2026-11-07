@@ -3,11 +3,18 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:EasySearcher.App"
         xmlns:vwp="clr-namespace:WpfToolkit.Controls;assembly=VirtualizingWrapPanel"
-        Title="EasySearcher" Height="640" Width="1300" Icon="Assets/EasySearcher.ico"
-        WindowStartupLocation="CenterScreen"
+        Title="EasySearcher" Height="640" Width="1300" MinWidth="1040" MinHeight="360" Icon="Assets/EasySearcher.ico"
+        WindowStartupLocation="CenterScreen" PreviewKeyDown="Window_PreviewKeyDown"
         FocusManager.FocusedElement="{Binding ElementName=QueryBox}">
     <Window.Resources>
         <local:SizeConverter x:Key="SizeConverter" />
+
+        <DataTemplate x:Key="HistoryItemTemplate">
+            <StackPanel Margin="2,3">
+                <TextBlock Text="{Binding Title}" FontWeight="SemiBold" />
+                <TextBlock Text="{Binding Description}" Foreground="Gray" FontSize="11" />
+            </StackPanel>
+        </DataTemplate>
 
         <!-- Vistas de iconos: cuadricula virtualizada (solo crea los elementos visibles) -->
         <ItemsPanelTemplate x:Key="MediumIconsPanel">
@@ -76,7 +83,7 @@
                            Margin="7,0" VerticalAlignment="Center" IsHitTestVisible="False" />
             </Grid>
             <Button Grid.Column="2" Content="..." Width="32" Margin="6,0,0,0"
-                    ToolTip="Elegir carpeta raiz" Click="BrowseRoot_Click" />
+                    ToolTip="Elegir carpeta raíz" Click="BrowseRoot_Click" />
             <Button Grid.Column="3" Content="&#xE711;" FontFamily="Segoe MDL2 Assets" Width="32" Margin="6,0,0,0"
                     ToolTip="Buscar en todas las unidades" Click="ClearRoot_Click" />
         </Grid>
@@ -113,6 +120,9 @@
                         <ComboBoxItem Content="GB" />
                     </ComboBox>
                 </StackPanel>
+                <!-- Visible solo con algun filtro puesto -->
+                <Button x:Name="ClearFiltersButton" Content="Quitar filtros" Margin="8,0,0,0" Padding="8,0"
+                        Visibility="Collapsed" Click="ClearFilters_Click" />
             </StackPanel>
             <!-- Mismo orden que el enum ViewMode -->
             <ComboBox x:Name="ViewBox" Grid.Column="4" Width="135" Margin="8,0,0,0" SelectedIndex="0"
@@ -123,7 +133,7 @@
             </ComboBox>
             <!-- Mismo orden que el enum DatePreset -->
             <ComboBox x:Name="DateBox" Grid.Column="2" Width="160" Margin="8,0,0,0" SelectedIndex="0"
-                      VerticalContentAlignment="Center" ToolTip="Fecha de modificacion"
+                      VerticalContentAlignment="Center" ToolTip="Fecha de modificación"
                       SelectionChanged="DateBox_SelectionChanged">
                 <ComboBoxItem Content="Cualquier fecha" />
                 <ComboBoxItem Content="Hoy" />
@@ -163,16 +173,8 @@
                         <TextBlock x:Name="HistoryEmpty" DockPanel.Dock="Top" Margin="8,6" Foreground="Gray"
                                    Text="Las búsquedas aparecen aquí cuando abres, copias o arrastras un resultado." TextWrapping="Wrap" />
                         <ListBox x:Name="HistoryList" MaxHeight="320" BorderThickness="0"
-                                 MouseUp="HistoryList_MouseUp" KeyDown="HistoryList_KeyDown">
-                            <ListBox.ItemTemplate>
-                                <DataTemplate>
-                                    <StackPanel Margin="2,3">
-                                        <TextBlock Text="{Binding Title}" FontWeight="SemiBold" />
-                                        <TextBlock Text="{Binding Description}" Foreground="Gray" FontSize="11" />
-                                    </StackPanel>
-                                </DataTemplate>
-                            </ListBox.ItemTemplate>
-                        </ListBox>
+                                 ItemTemplate="{StaticResource HistoryItemTemplate}"
+                                 MouseUp="HistoryList_MouseUp" KeyDown="HistoryList_KeyDown" />
                     </DockPanel>
                 </Border>
             </Popup>
@@ -207,70 +209,99 @@
             </StatusBarItem>
         </StatusBar>
 
-        <!-- IsTextSearchEnabled en falso: con cientos de miles de filas la busqueda por tecla es muy lenta -->
-        <ListView x:Name="ResultsList" SelectionMode="Extended" IsTextSearchEnabled="False"
-                  VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
-                  KeyDown="ResultsList_KeyDown" GridViewColumnHeader.Click="ColumnHeader_Click"
-                  PreviewMouseLeftButtonDown="ResultsList_PreviewMouseLeftButtonDown"
-                  PreviewMouseMove="ResultsList_PreviewMouseMove"
-                  PreviewMouseLeftButtonUp="ResultsList_PreviewMouseLeftButtonUp">
-            <ListView.ItemContainerStyle>
-                <Style TargetType="ListViewItem">
-                    <!-- Stretch para poder alinear a la derecha la columna de tamano -->
-                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                    <EventSetter Event="MouseDoubleClick" Handler="ResultItem_DoubleClick" />
-                </Style>
-            </ListView.ItemContainerStyle>
-            <ListView.ContextMenu>
-                <ContextMenu>
-                    <MenuItem Header="_Abrir" InputGestureText="Enter" Click="OpenMenu_Click" />
-                    <MenuItem Header="Abrir _carpeta contenedora" InputGestureText="Ctrl+Enter" Click="ShowInFolderMenu_Click" />
-                    <MenuItem Header="_Buscar solo aqui" ToolTip="Usar esta carpeta como raiz de las busquedas" Click="SearchHereMenu_Click" />
-                    <Separator />
-                    <MenuItem Header="Copiar _ruta completa" InputGestureText="Ctrl+C" Click="CopyPathMenu_Click" />
-                    <MenuItem Header="Copiar _nombre" Click="CopyNameMenu_Click" />
-                </ContextMenu>
-            </ListView.ContextMenu>
-            <ListView.View>
-                <GridView>
-                    <GridViewColumn x:Name="NameColumn" Header="Nombre" Width="340">
-                        <GridViewColumn.CellTemplate>
-                            <DataTemplate>
-                                <StackPanel Orientation="Horizontal">
-                                    <!-- Icono real del tipo de archivo; mientras carga, un glifo generico -->
-                                    <Grid Width="16" Height="16" Margin="0,0,6,0" VerticalAlignment="Center">
-                                        <TextBlock x:Name="Glyph" FontFamily="Segoe MDL2 Assets" Text="&#xE8A5;"
-                                                   Foreground="Gray" Visibility="Collapsed" />
-                                        <Image Source="{Binding SmallIcon}" />
-                                    </Grid>
-                                    <TextBlock Text="{Binding Name}" />
-                                </StackPanel>
-                                <DataTemplate.Triggers>
-                                    <DataTrigger Binding="{Binding SmallIcon}" Value="{x:Null}">
-                                        <Setter TargetName="Glyph" Property="Visibility" Value="Visible" />
-                                    </DataTrigger>
-                                    <DataTrigger Binding="{Binding IsDirectory}" Value="True">
-                                        <Setter TargetName="Glyph" Property="Text" Value="&#xE8B7;" />
-                                        <Setter TargetName="Glyph" Property="Foreground" Value="Goldenrod" />
-                                    </DataTrigger>
-                                </DataTemplate.Triggers>
-                            </DataTemplate>
-                        </GridViewColumn.CellTemplate>
-                    </GridViewColumn>
-                    <GridViewColumn x:Name="FolderColumn" Header="Carpeta" Width="540" DisplayMemberBinding="{Binding DirectoryPath}" />
-                    <!-- El tamano y la fecha llegan despues que el resto de la fila (ResultRow notifica el cambio) -->
-                    <GridViewColumn x:Name="SizeColumn" Header="Tamaño" Width="100">
-                        <GridViewColumn.CellTemplate>
-                            <DataTemplate>
-                                <TextBlock HorizontalAlignment="Right"
-                                           Text="{Binding Size, Converter={StaticResource SizeConverter}}" />
-                            </DataTemplate>
-                        </GridViewColumn.CellTemplate>
-                    </GridViewColumn>
-                    <GridViewColumn x:Name="ModifiedColumn" Header="Modificado" Width="130"
-                                    DisplayMemberBinding="{Binding Modified, StringFormat=yyyy-MM-dd HH:mm}" />
-                </GridView>
-            </ListView.View>
-        </ListView>
+        <Grid>
+            <!-- IsTextSearchEnabled en falso: con cientos de miles de filas la busqueda por tecla es muy lenta -->
+            <ListView x:Name="ResultsList" SelectionMode="Extended" IsTextSearchEnabled="False"
+                      VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                      KeyDown="ResultsList_KeyDown" PreviewKeyDown="ResultsList_PreviewKeyDown"
+                      PreviewTextInput="ResultsList_PreviewTextInput" SizeChanged="ResultsList_SizeChanged"
+                      GridViewColumnHeader.Click="ColumnHeader_Click"
+                      PreviewMouseLeftButtonDown="ResultsList_PreviewMouseLeftButtonDown"
+                      PreviewMouseMove="ResultsList_PreviewMouseMove"
+                      PreviewMouseLeftButtonUp="ResultsList_PreviewMouseLeftButtonUp">
+                <ListView.ItemContainerStyle>
+                    <Style TargetType="ListViewItem">
+                        <!-- Stretch para poder alinear a la derecha la columna de tamano -->
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                        <Setter Property="ToolTip" Value="{Binding FullPath}" />
+                        <EventSetter Event="MouseDoubleClick" Handler="ResultItem_DoubleClick" />
+                    </Style>
+                </ListView.ItemContainerStyle>
+                <ListView.ContextMenu>
+                    <ContextMenu>
+                        <MenuItem Header="_Abrir" InputGestureText="Enter" Click="OpenMenu_Click" />
+                        <MenuItem Header="Abrir _carpeta contenedora" InputGestureText="Ctrl+Enter" Click="ShowInFolderMenu_Click" />
+                        <MenuItem Header="_Buscar solo aquí" ToolTip="Usar esta carpeta como raíz de las búsquedas" Click="SearchHereMenu_Click" />
+                        <Separator />
+                        <MenuItem Header="Copiar _ruta completa" InputGestureText="Ctrl+C" Click="CopyPathMenu_Click" />
+                        <MenuItem Header="Copiar _nombre" Click="CopyNameMenu_Click" />
+                    </ContextMenu>
+                </ListView.ContextMenu>
+                <ListView.View>
+                    <GridView>
+                        <GridViewColumn x:Name="NameColumn" Header="Nombre" Width="340">
+                            <GridViewColumn.CellTemplate>
+                                <DataTemplate>
+                                    <StackPanel Orientation="Horizontal">
+                                        <!-- Icono real del tipo de archivo; mientras carga, un glifo generico -->
+                                        <Grid Width="16" Height="16" Margin="0,0,6,0" VerticalAlignment="Center">
+                                            <TextBlock x:Name="Glyph" FontFamily="Segoe MDL2 Assets" Text="&#xE8A5;"
+                                                       Foreground="Gray" Visibility="Collapsed" />
+                                            <Image Source="{Binding SmallIcon}" />
+                                        </Grid>
+                                        <TextBlock Text="{Binding Name}" />
+                                    </StackPanel>
+                                    <DataTemplate.Triggers>
+                                        <DataTrigger Binding="{Binding SmallIcon}" Value="{x:Null}">
+                                            <Setter TargetName="Glyph" Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding IsDirectory}" Value="True">
+                                            <Setter TargetName="Glyph" Property="Text" Value="&#xE8B7;" />
+                                            <Setter TargetName="Glyph" Property="Foreground" Value="Goldenrod" />
+                                        </DataTrigger>
+                                    </DataTemplate.Triggers>
+                                </DataTemplate>
+                            </GridViewColumn.CellTemplate>
+                        </GridViewColumn>
+                        <GridViewColumn x:Name="FolderColumn" Header="Carpeta" Width="540">
+                            <GridViewColumn.CellTemplate>
+                                <DataTemplate>
+                                    <local:PathText Text="{Binding DirectoryPath}" />
+                                </DataTemplate>
+                            </GridViewColumn.CellTemplate>
+                        </GridViewColumn>
+                        <!-- El tamano y la fecha llegan despues que el resto de la fila (ResultRow notifica el cambio) -->
+                        <GridViewColumn x:Name="SizeColumn" Header="Tamaño" Width="100">
+                            <GridViewColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock HorizontalAlignment="Right"
+                                               Text="{Binding Size, Converter={StaticResource SizeConverter}}" />
+                                </DataTemplate>
+                            </GridViewColumn.CellTemplate>
+                        </GridViewColumn>
+                        <GridViewColumn x:Name="ModifiedColumn" Header="Modificado" Width="130"
+                                        DisplayMemberBinding="{Binding Modified, StringFormat=yyyy-MM-dd HH:mm}" />
+                    </GridView>
+                </ListView.View>
+            </ListView>
+
+            <!-- Sustituye a la lista cuando no hay filas: explica por que y que se puede hacer -->
+            <StackPanel x:Name="MessagePanel" Width="560" VerticalAlignment="Center" HorizontalAlignment="Center"
+                        Visibility="Collapsed">
+                <TextBlock x:Name="MessageTitle" FontSize="18" TextAlignment="Center" TextWrapping="Wrap" />
+                <TextBlock x:Name="MessageDetail" Foreground="Gray" TextAlignment="Center" TextWrapping="Wrap"
+                           LineHeight="20" Margin="0,8,0,0" />
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,4,0,0">
+                    <Button x:Name="MessageClearFilters" Content="Quitar filtros" Margin="4,8,4,0" Padding="10,4"
+                            Click="ClearFilters_Click" />
+                    <Button x:Name="MessageAllDrives" Content="Buscar en todas las unidades" Margin="4,8,4,0" Padding="10,4"
+                            Click="ClearRoot_Click" />
+                </StackPanel>
+                <TextBlock x:Name="RecentTitle" Text="Búsquedas recientes" FontWeight="SemiBold" Margin="0,20,0,4" />
+                <ListBox x:Name="RecentList" BorderThickness="0" Background="Transparent" MaxHeight="230"
+                         ItemTemplate="{StaticResource HistoryItemTemplate}" MouseUp="HistoryList_MouseUp"
+                         KeyDown="HistoryList_KeyDown" />
+            </StackPanel>
+        </Grid>
     </DockPanel>
 </Window>

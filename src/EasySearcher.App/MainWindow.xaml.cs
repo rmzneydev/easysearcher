@@ -28,7 +28,12 @@ public partial class MainWindow : Window
     bool _polling;
     string? _appliedRoot;
     bool _rootApplied;
+    bool _rootFailed;
     int _searchVersion;
+    int _answeredVersion;
+    int? _resultCount;      // de la ultima busqueda; null si no se ha buscado
+    string? _searchError;
+    ListMessage? _message;
 
     // Arrastrar y soltar
     Point _dragStart;
@@ -124,7 +129,7 @@ public partial class MainWindow : Window
                 service.Dispose();
                 _service = null;
                 _status = null;
-                StatusText.Text = "Se perdio la conexion con el servicio de EasySearcher. Reintentando...";
+                StatusText.Text = "Se perdió la conexión con el servicio de EasySearcher. Reintentando...";
                 return;
             }
 
@@ -156,6 +161,7 @@ public partial class MainWindow : Window
         finally
         {
             _polling = false;
+            UpdateMessage();
         }
     }
 
@@ -179,7 +185,7 @@ public partial class MainWindow : Window
             return new SearchEngine(FileIndex.GetNtfsDrives());
         }
 
-        StatusText.Text = "El servicio de EasySearcher no esta en ejecucion. Reintentando...";
+        StatusText.Text = "El servicio de EasySearcher no está en ejecución. Reintentando...";
         return null;
     }
 
@@ -191,7 +197,7 @@ public partial class MainWindow : Window
 
     void UpdateStatus(EngineStatus status)
     {
-        string source = _usingLocalEngine ? "  ·  sin servicio (indice en esta ventana)" : "";
+        string source = _usingLocalEngine ? "  ·  sin servicio (índice en esta ventana)" : "";
         if (!status.Ready)
         {
             StatusText.Text = status.Failures.Length > 0
@@ -203,17 +209,17 @@ public partial class MainWindow : Window
         var text = $"{status.Entries:N0} entradas en {string.Join(" ", status.Drives.Select(d => d + ":"))}";
         text += status.NotLive.Length == 0
             ? "  ·  actualizado en vivo"
-            : $"  ·  sin actualizacion en vivo en {string.Join(" ", status.NotLive.Select(d => d + ":"))}";
+            : $"  ·  sin actualización en vivo en {string.Join(" ", status.NotLive.Select(d => d + ":"))}";
         if (status.Failures.Length > 0)
             text += "   |   No indexadas: " + string.Join("; ", status.Failures);
         if (!status.DetailsReady && ServiceUpToDate)
             text += "  ·  leyendo tamaños y fechas...";
         if (!ServiceUpToDate)
-            text += "   |   El servicio instalado es una version anterior: actualiza EasySearcher para filtrar por fecha, tamaño o tipo";
+            text += "   |   El servicio instalado es una versión anterior: actualiza EasySearcher para filtrar por fecha, tamaño o tipo";
         StatusText.Text = text + source;
 
         DateBox.IsEnabled = ServiceUpToDate;
-        DateBox.ToolTip = ServiceUpToDate ? "Fecha de modificacion" : "Requiere actualizar el servicio de EasySearcher";
+        DateBox.ToolTip = ServiceUpToDate ? "Fecha de modificación" : "Requiere actualizar el servicio de EasySearcher";
         SizeBox.IsEnabled = ServiceUpToDate;
         SizeBox.ToolTip = ServiceUpToDate ? "Tamaño" : "Requiere actualizar el servicio de EasySearcher";
         SizeValuePanel.IsEnabled = ServiceUpToDate;
@@ -231,7 +237,7 @@ public partial class MainWindow : Window
     {
         if (!IsReady || _service is not { } service) return;
         string root = RootBox.Text.Trim();
-        if (_rootApplied && root == (_appliedRoot ?? "")) return;
+        if (_rootApplied && !_rootFailed && root == (_appliedRoot ?? "")) return;
 
         string? resolved = null;
         if (root.Length > 0)
@@ -245,12 +251,16 @@ public partial class MainWindow : Window
                 RootBox.BorderBrush = Brushes.IndianRed;
                 ResultsList.ItemsSource = null;
                 ResultText.Text = ex.Message;
+                _searchError = ex.Message;
+                _rootFailed = true;
+                UpdateMessage();
                 return;
             }
             RootBox.Text = resolved;
         }
 
         RootBox.ClearValue(BorderBrushProperty);
+        _rootFailed = false;
         _appliedRoot = resolved;
         _rootApplied = true;
         _settings.RootPath = resolved;
@@ -273,17 +283,17 @@ public partial class MainWindow : Window
         if (!IsReady || !_rootApplied || _service is not { } service) return;
 
         int version = ++_searchVersion;
-        string text = QueryBox.Text.Trim();
+        var search = CurrentSearch;
+        string text = search.Text;
         string where = _appliedRoot ?? "todas las unidades";
+        ClearFiltersButton.Visibility = search.HasFilters ? Visibility.Visible : Visibility.Collapsed;
 
-        var preset = ServiceUpToDate ? (DatePreset)DateBox.SelectedIndex : DatePreset.Any;
-        var (from, to) = DateFilter.GetRange(preset, FromDate.SelectedDate, ToDate.SelectedDate, DateTime.Now);
-        string dateText = DateFilter.Describe(preset, FromDate.SelectedDate, ToDate.SelectedDate);
+        var (from, to) = DateFilter.GetRange(search.Date, search.CustomFrom, search.CustomTo, DateTime.Now);
+        string dateText = DateFilter.Describe(search.Date, search.CustomFrom, search.CustomTo);
         if (dateText.Length > 0) where += $", {dateText}";
 
-        var size = ServiceUpToDate ? CurrentSize : default;
-        var (minSize, maxSize) = SizeFilter.GetRange(size);
-        string sizeText = SizeFilter.Describe(size);
+        var (minSize, maxSize) = SizeFilter.GetRange(search.Size);
+        string sizeText = SizeFilter.Describe(search.Size);
         if (sizeText.Length > 0) where += $", {sizeText}";
         bool detailFilter = from is not null || to is not null || minSize is not null || maxSize is not null;
 
@@ -292,13 +302,17 @@ public partial class MainWindow : Window
         {
             ResultsList.ItemsSource = null;
             ResultText.Text = $"Buscando en {where}";
+            _resultCount = null;
+            _searchError = null;
+            _answeredVersion = version;
+            UpdateMessage();
             return;
         }
 
         var current = ResultsList.ItemsSource as VirtualResultList;
         var request = new SearchRequest(
             text,
-            (EntryKind)KindBox.SelectedIndex,
+            search.Kind,
             _appliedRoot,
             SystemBox.IsChecked == true,
             _settings.SortColumn,
@@ -312,11 +326,15 @@ public partial class MainWindow : Window
         try
         {
             if (!preserveView && detailFilter && _status?.DetailsReady != true)
-                ResultText.Text = "Filtrando (todavia se estan leyendo tamaños y fechas)...";
+                ResultText.Text = "Filtrando (todavía se están leyendo tamaños y fechas)...";
             var response = await Task.Run(() => service.Search(request));
             // Si mientras tanto se lanzo otra busqueda, esta respuesta ya no interesa
             if (version != _searchVersion) return;
 
+            _answeredVersion = version;
+            _resultCount = response.Total;
+            _searchError = null;
+            UpdateMessage();
             ResultText.Text = $"{response.Total:N0} resultados en {where}  ·  {response.ElapsedMs:N0} ms";
             if (preserveView && response.Unchanged)
             {
@@ -327,13 +345,49 @@ public partial class MainWindow : Window
 
             var list = new VirtualResultList(service, response.SearchId, response.Total,
                 onExpired: () => Dispatcher.InvokeAsync(() => SearchAsync(preserveView: true)));
-            if (preserveView) ReplaceResultsKeepingView(list);
-            else ResultsList.ItemsSource = list;
+            if (preserveView)
+            {
+                ReplaceResultsKeepingView(list);
+            }
+            else
+            {
+                ResultsList.ItemsSource = list;
+                SelectFirstResult();
+            }
         }
         catch (SearchServiceException ex)
         {
-            if (version == _searchVersion) ResultText.Text = ex.Message;
+            if (version != _searchVersion) return;
+            ResultText.Text = ex.Message;
+            _searchError = ex.Message;
+            UpdateMessage();
         }
+    }
+
+    /// <summary>La primera fila queda marcada: es la que abre Enter desde el campo de busqueda.</summary>
+    void SelectFirstResult()
+    {
+        if (ResultsList.SelectedIndex < 0 && ResultsList.Items.Count > 0) ResultsList.SelectedIndex = 0;
+    }
+
+    /// <summary>Muestra sobre la lista lo que corresponda a la situacion actual, si hay algo que decir.</summary>
+    void UpdateMessage()
+    {
+        var message = ListMessage.For(_status, CurrentSearch, _resultCount, _searchError, _rootFailed);
+        if (message == _message) return;
+        _message = message;
+
+        MessagePanel.Visibility = message is null ? Visibility.Collapsed : Visibility.Visible;
+        if (message is null) return;
+
+        MessageTitle.Text = message.Title;
+        MessageDetail.Text = message.Detail;
+        MessageClearFilters.Visibility = message.OfferClearFilters ? Visibility.Visible : Visibility.Collapsed;
+        MessageAllDrives.Visibility = message.OfferAllDrives ? Visibility.Visible : Visibility.Collapsed;
+
+        var recent = message.ShowRecent ? _history.Entries.Take(5).ToList() : [];
+        RecentList.ItemsSource = recent;
+        RecentList.Visibility = RecentTitle.Visibility = recent.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
     async void ColumnHeader_Click(object sender, RoutedEventArgs e)
@@ -390,7 +444,12 @@ public partial class MainWindow : Window
                     int i = list.IndexOf(row);
                     if (i >= 0) ResultsList.SelectedItems.Add(list[i]);
                 }
+                SelectFirstResult();
             }, DispatcherPriority.ContextIdle);
+        }
+        else
+        {
+            SelectFirstResult();
         }
     }
 
@@ -430,7 +489,7 @@ public partial class MainWindow : Window
 
     async void BrowseRoot_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new OpenFolderDialog { Title = "Carpeta raiz de las busquedas" };
+        var dialog = new OpenFolderDialog { Title = "Carpeta raíz de las búsquedas" };
         if (Directory.Exists(RootBox.Text)) dialog.InitialDirectory = RootBox.Text;
         if (dialog.ShowDialog(this) == true)
             await SetRootAsync(dialog.FolderName);
@@ -459,17 +518,20 @@ public partial class MainWindow : Window
     void RecordHistory()
     {
         if (!_settings.HistoryEnabled || !_rootApplied) return;
-        var entry = new HistoryEntry(
-            QueryBox.Text.Trim(),
-            _appliedRoot,
-            (EntryKind)KindBox.SelectedIndex,
-            (DatePreset)DateBox.SelectedIndex,
-            FromDate.SelectedDate,
-            ToDate.SelectedDate,
-            CurrentSize) { LastUsed = DateTime.Now };
-        if (entry.Text.Length == 0 && entry.Date == DatePreset.Any && entry.Size == default) return;
+        var entry = CurrentSearch with { LastUsed = DateTime.Now };
+        if (entry.Text.Length == 0 && !entry.UsesDetails) return;
         _history.Add(entry);
     }
+
+    /// <summary>La busqueda de la ventana. Un servicio anterior no entiende los filtros de fecha y tamano.</summary>
+    SearchState CurrentSearch => new(
+        QueryBox.Text.Trim(),
+        _appliedRoot,
+        (EntryKind)KindBox.SelectedIndex,
+        ServiceUpToDate ? (DatePreset)DateBox.SelectedIndex : DatePreset.Any,
+        FromDate.SelectedDate,
+        ToDate.SelectedDate,
+        ServiceUpToDate ? CurrentSize : default);
 
     /// <summary>Abre (o actualiza) la lista de busquedas recientes que contienen el texto escrito.</summary>
     void ShowHistory()
@@ -478,7 +540,7 @@ public partial class MainWindow : Window
         HistoryList.ItemsSource = entries;
         HistoryList.Visibility = entries.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         HistoryEmpty.Visibility = entries.Count > 0 ? Visibility.Collapsed : Visibility.Visible;
-        HistoryEmpty.Text = !_settings.HistoryEnabled ? "El historial esta desactivado."
+        HistoryEmpty.Text = !_settings.HistoryEnabled ? "El historial está desactivado."
             : _history.Entries.Count == 0 ? "Las búsquedas aparecen aquí cuando abres, copias o arrastras un resultado."
             : "Ninguna búsqueda reciente contiene ese texto.";
         if (entries.Count > 0 && HistoryList.SelectedIndex < 0) HistoryList.SelectedIndex = 0;
@@ -486,7 +548,7 @@ public partial class MainWindow : Window
     }
 
     /// <summary>Restaura una busqueda del historial (texto, carpeta y filtros) y la ejecuta.</summary>
-    async Task ApplyHistoryAsync(HistoryEntry entry)
+    async Task ApplyHistoryAsync(SearchState entry)
     {
         HistoryPopup.IsOpen = false;
         _applyingHistory = true;
@@ -517,6 +579,27 @@ public partial class MainWindow : Window
         await ApplyRootAsync();
     }
 
+    /// <summary>Quita los filtros; el texto, la carpeta y "Sistema" se quedan como estan.</summary>
+    async void ClearFilters_Click(object sender, RoutedEventArgs e)
+    {
+        _applyingHistory = true;
+        try
+        {
+            KindBox.SelectedIndex = (int)EntryKind.All;
+            DateBox.SelectedIndex = (int)DatePreset.Any;
+            FromDate.SelectedDate = null;
+            ToDate.SelectedDate = null;
+            SizeBox.SelectedIndex = (int)SizeMode.Any;
+            SizeValueBox.Clear();
+        }
+        finally
+        {
+            _applyingHistory = false;
+        }
+        await SearchAsync();
+        QueryBox.Focus();
+    }
+
     void HistoryButton_Click(object sender, RoutedEventArgs e)
     {
         if (HistoryPopup.IsOpen) HistoryPopup.IsOpen = false;
@@ -526,13 +609,13 @@ public partial class MainWindow : Window
 
     async void HistoryList_MouseUp(object sender, MouseButtonEventArgs e)
     {
-        if (FindAncestor<ListBoxItem>(e.OriginalSource as DependencyObject) is { Content: HistoryEntry entry })
+        if (FindAncestor<ListBoxItem>(e.OriginalSource as DependencyObject) is { Content: SearchState entry })
             await ApplyHistoryAsync(entry);
     }
 
     async void HistoryList_KeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.Enter && HistoryList.SelectedItem is HistoryEntry entry)
+        if (e.Key == Key.Enter && HistoryList.SelectedItem is SearchState entry)
         {
             e.Handled = true;
             await ApplyHistoryAsync(entry);
@@ -541,7 +624,7 @@ public partial class MainWindow : Window
 
     void RemoveSelectedHistory()
     {
-        if (HistoryList.SelectedItem is not HistoryEntry entry) return;
+        if (HistoryList.SelectedItem is not SearchState entry) return;
         int index = HistoryList.SelectedIndex;
         _history.Remove(entry);
         ShowHistory();
@@ -609,9 +692,7 @@ public partial class MainWindow : Window
 
     /// <summary>El resultado depende de tamanos o fechas: hay que repetir la busqueda si cambian.</summary>
     bool DependsOnDetails =>
-        _settings.SortColumn is SortColumn.Size or SortColumn.Modified ||
-        DateBox.SelectedIndex != (int)DatePreset.Any ||
-        CurrentSize != default;
+        _settings.SortColumn is SortColumn.Size or SortColumn.Modified || CurrentSearch.UsesDetails;
 
     void ViewBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
@@ -665,7 +746,7 @@ public partial class MainWindow : Window
                     HistoryList.ScrollIntoView(HistoryList.SelectedItem);
                     e.Handled = true;
                     return;
-                case Key.Enter when HistoryList.SelectedItem is HistoryEntry entry:
+                case Key.Enter when HistoryList.SelectedItem is SearchState entry:
                     e.Handled = true;
                     await ApplyHistoryAsync(entry);
                     return;
@@ -687,24 +768,70 @@ public partial class MainWindow : Window
                 ShowHistory();
                 e.Handled = true;
                 break;
+            // La fila marcada ya es la de Enter: abajo avanza a la siguiente
             case Key.Down when ResultsList.Items.Count > 0:
-                ResultsList.SelectedIndex = 0;
+                int next = Math.Min(ResultsList.SelectedIndex + 1, ResultsList.Items.Count - 1);
+                ResultsList.SelectedIndex = next;
                 ResultsList.ScrollIntoView(ResultsList.SelectedItem);
-                (ResultsList.ItemContainerGenerator.ContainerFromIndex(0) as ListViewItem)?.Focus();
+                (ResultsList.ItemContainerGenerator.ContainerFromIndex(next) as ListViewItem)?.Focus();
                 e.Handled = true;
                 break;
-            case Key.Enter when ResultsList.Items.Count > 0:
-                var first = (ResultRow)ResultsList.Items[0];
-                RecordHistory();
-                if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) Shell.ShowInFolder(first.FullPath);
-                else Shell.Open(first.FullPath);
+            case Key.Enter:
                 e.Handled = true;
+                // Con la busqueda aun en camino la fila marcada es de la anterior: abriria otra cosa
+                if (_answeredVersion != _searchVersion || ResultsList.SelectedItem is not ResultRow target) break;
+                RecordHistory();
+                if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) Shell.ShowInFolder(target.FullPath);
+                else Shell.Open(target.FullPath);
                 break;
             case Key.Escape:
                 QueryBox.Clear();
                 e.Handled = true;
                 break;
         }
+    }
+
+    void FocusQuery()
+    {
+        QueryBox.Focus();
+        QueryBox.SelectAll();
+    }
+
+    void Window_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key is Key.L or Key.F && Keyboard.Modifiers == ModifierKeys.Control)
+        {
+            FocusQuery();
+            e.Handled = true;
+        }
+    }
+
+    void ResultsList_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        // Esc, o subir desde la primera fila, vuelve al campo de busqueda
+        if (e.Key == Key.Escape || (e.Key == Key.Up && Keyboard.Modifiers == ModifierKeys.None && ResultsList.SelectedIndex == 0))
+        {
+            FocusQuery();
+            e.Handled = true;
+        }
+    }
+
+    /// <summary>Escribir con el foco en la lista sigue la busqueda, en vez de perder las teclas.</summary>
+    void ResultsList_PreviewTextInput(object sender, TextCompositionEventArgs e)
+    {
+        if (e.Text.Length == 0 || char.IsControl(e.Text[0])) return;
+        QueryBox.Focus();
+        QueryBox.AppendText(e.Text);
+        QueryBox.CaretIndex = QueryBox.Text.Length;
+        e.Handled = true;
+    }
+
+    /// <summary>Carpeta se lleva el espacio libre: es la columna que mas lo aprovecha.</summary>
+    void ResultsList_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        const double minimum = 240, margin = 24;
+        double others = NameColumn.ActualWidth + SizeColumn.ActualWidth + ModifiedColumn.ActualWidth;
+        FolderColumn.Width = Math.Max(minimum, ResultsList.ActualWidth - others - SystemParameters.VerticalScrollBarWidth - margin);
     }
 
     void ResultsList_KeyDown(object sender, KeyEventArgs e)
