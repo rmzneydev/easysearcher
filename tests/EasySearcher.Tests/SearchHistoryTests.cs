@@ -11,7 +11,7 @@ public class SearchHistoryTests : IDisposable
     public void Dispose() => File.Delete(_path);
 
     static HistoryEntry Entry(string text, DateTime used, string? root = @"D:\Musica",
-        EntryKind kind = EntryKind.All, DatePreset date = DatePreset.Any, SizePreset size = SizePreset.Any) =>
+        EntryKind kind = EntryKind.All, DatePreset date = DatePreset.Any, SizeCriterion size = default) =>
         new(text, root, kind, date, null, null, size) { LastUsed = used };
 
     [Fact]
@@ -49,7 +49,7 @@ public class SearchHistoryTests : IDisposable
     {
         var history = SearchHistory.Load(_path);
         history.Add(Entry("*.mp4", T0, kind: EntryKind.Videos));
-        history.Add(Entry("*.mp4", T0.AddMinutes(1), size: SizePreset.Gigantic));
+        history.Add(Entry("*.mp4", T0.AddMinutes(1), size: new SizeCriterion(SizeMode.Larger, 4, SizeUnit.GB)));
         Assert.Equal(2, history.Entries.Count);
     }
 
@@ -77,17 +77,34 @@ public class SearchHistoryTests : IDisposable
     {
         var history = SearchHistory.Load(_path);
         history.Add(new HistoryEntry("*.jpg", @"D:\Fotos", EntryKind.Images, DatePreset.Custom,
-            new DateTime(2024, 1, 1), new DateTime(2024, 12, 31), SizePreset.Medium) { LastUsed = T0 });
+            new DateTime(2024, 1, 1), new DateTime(2024, 12, 31), new SizeCriterion(SizeMode.Smaller, 128, SizeUnit.MB)) { LastUsed = T0 });
 
         var reloaded = SearchHistory.Load(_path).Entries.Single();
         Assert.Equal(@"D:\Fotos", reloaded.Root);
         Assert.Equal(EntryKind.Images, reloaded.Kind);
         Assert.Equal(DatePreset.Custom, reloaded.Date);
         Assert.Equal(new DateTime(2024, 12, 31), reloaded.CustomTo);
-        Assert.Equal(SizePreset.Medium, reloaded.Size);
+        Assert.Equal(new SizeCriterion(SizeMode.Smaller, 128, SizeUnit.MB), reloaded.Size);
         // El formato de las fechas depende de la configuracion regional: se comprueba el resto
         Assert.StartsWith(@"en D:\Fotos  ·  imágenes  ·  modificados del ", reloaded.Description);
-        Assert.EndsWith("  ·  de 1 a 128 MB", reloaded.Description);
+        Assert.EndsWith("  ·  de menos de 128 MB", reloaded.Description);
+    }
+
+    // Antes "Size" era un numero de categoria: 0 cualquiera, 1 vacio, 4 mediano, 7 gigantesco
+    [Theory]
+    [InlineData(0, (int)SizeMode.Any, 0, (int)SizeUnit.KB)]
+    [InlineData(1, (int)SizeMode.Empty, 0, (int)SizeUnit.KB)]
+    [InlineData(4, (int)SizeMode.Smaller, 128, (int)SizeUnit.MB)]
+    [InlineData(7, (int)SizeMode.Larger, 4, (int)SizeUnit.GB)]
+    public void Entries_saved_with_the_old_size_categories_still_load(int category, int mode, double value, int unit)
+    {
+        File.WriteAllText(_path, $$"""
+            [{ "Text": "*.mp4", "Root": null, "Kind": 0, "Date": 0, "CustomFrom": null, "CustomTo": null,
+               "Size": {{category}}, "LastUsed": "2026-11-01T18:00:00" }]
+            """);
+
+        var size = SearchHistory.Load(_path).Entries.Single().Size;
+        Assert.Equal(new SizeCriterion((SizeMode)mode, value, (SizeUnit)unit), size);
     }
 
     [Fact]

@@ -90,18 +90,30 @@
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
-            <!-- Mismo orden que el enum SizePreset -->
-            <ComboBox x:Name="SizeBox" Grid.Column="3" Width="150" Margin="8,0,0,0" SelectedIndex="0"
-                      VerticalContentAlignment="Center" ToolTip="Tamaño" SelectionChanged="SizeBox_SelectionChanged">
-                <ComboBoxItem Content="Cualquier tamaño" />
-                <ComboBoxItem Content="Vacío (0 KB)" />
-                <ComboBoxItem Content="Diminuto (0 - 16 KB)" />
-                <ComboBoxItem Content="Pequeño (16 KB - 1 MB)" />
-                <ComboBoxItem Content="Mediano (1 - 128 MB)" />
-                <ComboBoxItem Content="Grande (128 MB - 1 GB)" />
-                <ComboBoxItem Content="Enorme (1 - 4 GB)" />
-                <ComboBoxItem Content="Gigantesco (&gt; 4 GB)" />
-            </ComboBox>
+            <StackPanel Grid.Column="3" Orientation="Horizontal">
+                <!-- Mismo orden que el enum SizeMode -->
+                <ComboBox x:Name="SizeBox" Width="150" Margin="8,0,0,0" SelectedIndex="0"
+                          VerticalContentAlignment="Center" ToolTip="Tamaño" SelectionChanged="SizeBox_SelectionChanged">
+                    <ComboBoxItem Content="Cualquier tamaño" />
+                    <ComboBoxItem Content="Mayor que" />
+                    <ComboBoxItem Content="Menor que" />
+                    <ComboBoxItem Content="Vacío (0 KB)" />
+                </ComboBox>
+                <!-- Visible solo con "Mayor que" o "Menor que" -->
+                <StackPanel x:Name="SizeValuePanel" Orientation="Horizontal" Visibility="Collapsed">
+                    <TextBox x:Name="SizeValueBox" Width="60" Margin="4,0,0,0" MaxLength="8" Padding="2,0"
+                             VerticalContentAlignment="Center" HorizontalContentAlignment="Right"
+                             ToolTip="Cifra (admite decimales: 1,5)" PreviewTextInput="SizeValueBox_PreviewTextInput"
+                             TextChanged="SizeValue_Changed" />
+                    <!-- Mismo orden que el enum SizeUnit -->
+                    <ComboBox x:Name="SizeUnitBox" Width="55" Margin="4,0,0,0" SelectedIndex="1"
+                              VerticalContentAlignment="Center" ToolTip="Unidad" SelectionChanged="SizeValue_Changed">
+                        <ComboBoxItem Content="KB" />
+                        <ComboBoxItem Content="MB" />
+                        <ComboBoxItem Content="GB" />
+                    </ComboBox>
+                </StackPanel>
+            </StackPanel>
             <!-- Mismo orden que el enum ViewMode -->
             <ComboBox x:Name="ViewBox" Grid.Column="4" Width="135" Margin="8,0,0,0" SelectedIndex="0"
                       VerticalContentAlignment="Center" ToolTip="Vista" SelectionChanged="ViewBox_SelectionChanged">

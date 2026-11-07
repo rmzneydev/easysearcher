@@ -216,6 +216,7 @@ public partial class MainWindow : Window
         DateBox.ToolTip = ServiceUpToDate ? "Fecha de modificacion" : "Requiere actualizar el servicio de EasySearcher";
         SizeBox.IsEnabled = ServiceUpToDate;
         SizeBox.ToolTip = ServiceUpToDate ? "Tamaño" : "Requiere actualizar el servicio de EasySearcher";
+        SizeValuePanel.IsEnabled = ServiceUpToDate;
         // Las categorias (Imagenes, Videos...) tampoco las entiende un servicio anterior
         for (int i = (int)EntryKind.Images; i < KindBox.Items.Count; i++)
             ((ComboBoxItem)KindBox.Items[i]).IsEnabled = ServiceUpToDate;
@@ -280,9 +281,9 @@ public partial class MainWindow : Window
         string dateText = DateFilter.Describe(preset, FromDate.SelectedDate, ToDate.SelectedDate);
         if (dateText.Length > 0) where += $", {dateText}";
 
-        var sizePreset = ServiceUpToDate ? (SizePreset)SizeBox.SelectedIndex : SizePreset.Any;
-        var (minSize, maxSize) = SizeFilter.GetRange(sizePreset);
-        string sizeText = SizeFilter.Describe(sizePreset);
+        var size = ServiceUpToDate ? CurrentSize : default;
+        var (minSize, maxSize) = SizeFilter.GetRange(size);
+        string sizeText = SizeFilter.Describe(size);
         if (sizeText.Length > 0) where += $", {sizeText}";
         bool detailFilter = from is not null || to is not null || minSize is not null || maxSize is not null;
 
@@ -465,8 +466,8 @@ public partial class MainWindow : Window
             (DatePreset)DateBox.SelectedIndex,
             FromDate.SelectedDate,
             ToDate.SelectedDate,
-            (SizePreset)SizeBox.SelectedIndex) { LastUsed = DateTime.Now };
-        if (entry.Text.Length == 0 && entry.Date == DatePreset.Any && entry.Size == SizePreset.Any) return;
+            CurrentSize) { LastUsed = DateTime.Now };
+        if (entry.Text.Length == 0 && entry.Date == DatePreset.Any && entry.Size == default) return;
         _history.Add(entry);
     }
 
@@ -495,7 +496,12 @@ public partial class MainWindow : Window
             DateBox.SelectedIndex = (int)entry.Date;
             FromDate.SelectedDate = entry.CustomFrom;
             ToDate.SelectedDate = entry.CustomTo;
-            SizeBox.SelectedIndex = (int)entry.Size;
+            SizeBox.SelectedIndex = (int)entry.Size.Mode;
+            if (entry.Size.Mode is SizeMode.Larger or SizeMode.Smaller)
+            {
+                SizeValueBox.Text = SizeFilter.FormatValue(entry.Size.Value);
+                SizeUnitBox.SelectedIndex = (int)entry.Size.Unit;
+            }
             QueryBox.Text = entry.Text;
             RootBox.Text = entry.Root ?? "";
         }
@@ -570,13 +576,42 @@ public partial class MainWindow : Window
 
     async void CustomDate_Changed(object? sender, SelectionChangedEventArgs e) => await SearchAsync();
 
-    async void SizeBox_SelectionChanged(object sender, SelectionChangedEventArgs e) => await SearchAsync();
+    SizeCriterion CurrentSize =>
+        SizeFilter.Create((SizeMode)SizeBox.SelectedIndex, SizeValueBox.Text, (SizeUnit)SizeUnitBox.SelectedIndex);
+
+    async void SizeBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        // Se dispara durante InitializeComponent, antes de que exista el panel
+        if (SizeValuePanel is null) return;
+        bool needsValue = (SizeMode)SizeBox.SelectedIndex is SizeMode.Larger or SizeMode.Smaller;
+        SizeValuePanel.Visibility = needsValue ? Visibility.Visible : Visibility.Collapsed;
+        // "Cualquier tamaño" no cabe en el ancho reducido; "Mayor que" deja sitio a la cifra y la unidad
+        SizeBox.Width = needsValue ? 110 : 150;
+
+        // Solo al elegir en la lista: con el combo cerrado las flechas recorren las opciones. Se espera a
+        // que la lista se cierre (devuelve el foco al combo) y a que el panel recien mostrado tenga layout:
+        // antes de eso aun no es visible y no puede recibir el foco.
+        if (needsValue && SizeBox.IsDropDownOpen)
+        {
+            _ = Dispatcher.InvokeAsync(() =>
+            {
+                SizeValueBox.Focus();
+                SizeValueBox.SelectAll();
+            }, DispatcherPriority.ContextIdle);
+        }
+        await SearchAsync();
+    }
+
+    async void SizeValue_Changed(object sender, RoutedEventArgs e) => await SearchAsync();
+
+    void SizeValueBox_PreviewTextInput(object sender, TextCompositionEventArgs e) =>
+        e.Handled = !e.Text.All(c => char.IsAsciiDigit(c) || c is ',' or '.');
 
     /// <summary>El resultado depende de tamanos o fechas: hay que repetir la busqueda si cambian.</summary>
     bool DependsOnDetails =>
         _settings.SortColumn is SortColumn.Size or SortColumn.Modified ||
         DateBox.SelectedIndex != (int)DatePreset.Any ||
-        SizeBox.SelectedIndex != (int)SizePreset.Any;
+        CurrentSize != default;
 
     void ViewBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {

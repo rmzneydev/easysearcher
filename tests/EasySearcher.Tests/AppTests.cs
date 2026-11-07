@@ -103,25 +103,56 @@ public class SizeFilterTests
     const long KB = 1024, MB = 1024 * KB, GB = 1024 * MB;
 
     [Fact]
-    public void Presets_cover_every_size_without_gaps()
+    public void Larger_is_strict_and_smaller_excludes_the_limit()
     {
-        // Las categorias del Explorador, consecutivas: el maximo de una es el minimo de la siguiente
-        long? previousMax = 0;
-        for (var preset = SizePreset.Empty; preset <= SizePreset.Gigantic; preset++)
-        {
-            var (min, max) = SizeFilter.GetRange(preset);
-            Assert.Equal(previousMax, min);
-            previousMax = max;
-        }
-        Assert.Null(previousMax);
+        var larger = SizeFilter.Create(SizeMode.Larger, "100", SizeUnit.MB);
+        Assert.Equal((100 * MB + 1, (long?)null), SizeFilter.GetRange(larger));
+
+        var smaller = SizeFilter.Create(SizeMode.Smaller, "500", SizeUnit.KB);
+        Assert.Equal(((long?)null, 500 * KB), SizeFilter.GetRange(smaller));
     }
 
     [Fact]
-    public void Known_boundaries()
+    public void Empty_means_exactly_zero_bytes()
     {
-        Assert.Equal((0L, 1L), SizeFilter.GetRange(SizePreset.Empty));
-        Assert.Equal((1 * GB, 4 * GB), SizeFilter.GetRange(SizePreset.Huge));
-        Assert.Equal((4 * GB, (long?)null), SizeFilter.GetRange(SizePreset.Gigantic));
-        Assert.Equal(((long?)null, (long?)null), SizeFilter.GetRange(SizePreset.Any));
+        Assert.Equal((0L, 1L), SizeFilter.GetRange(SizeFilter.Create(SizeMode.Empty, "", SizeUnit.MB)));
+    }
+
+    [Theory]
+    [InlineData("1,5")]
+    [InlineData("1.5")]
+    [InlineData(" 1,5 ")]
+    public void Decimals_work_with_comma_or_point(string text)
+    {
+        var size = SizeFilter.Create(SizeMode.Smaller, text, SizeUnit.GB);
+        Assert.Equal(((long?)null, GB + GB / 2), SizeFilter.GetRange(size));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("abc")]
+    [InlineData("1,2,3")]
+    [InlineData("-5")]
+    [InlineData("99999999999")]   // mas que cualquier disco: no debe desbordar
+    public void Without_a_valid_value_it_does_not_filter(string text)
+    {
+        Assert.Equal(default, SizeFilter.Create(SizeMode.Larger, text, SizeUnit.GB));
+    }
+
+    [Fact]
+    public void Any_ignores_what_is_left_in_the_value_box()
+    {
+        // Dos busquedas sin filtro deben ser iguales aunque quede una cifra escrita (historial)
+        Assert.Equal(default, SizeFilter.Create(SizeMode.Any, "100", SizeUnit.GB));
+        Assert.Equal(((long?)null, (long?)null), SizeFilter.GetRange(default));
+        Assert.Equal("", SizeFilter.Describe(default));
+    }
+
+    [Fact]
+    public void Describe_reads_like_the_filter()
+    {
+        Assert.Equal("de mas de 100 MB", SizeFilter.Describe(new SizeCriterion(SizeMode.Larger, 100, SizeUnit.MB)));
+        Assert.Equal("de menos de 2 GB", SizeFilter.Describe(new SizeCriterion(SizeMode.Smaller, 2, SizeUnit.GB)));
+        Assert.Equal("vacios", SizeFilter.Describe(new SizeCriterion(SizeMode.Empty)));
     }
 }

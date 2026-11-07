@@ -12,8 +12,8 @@ actualiza en vivo con el USN Journal. Encuentra cualquier archivo o carpeta mien
 - Carpeta raíz para limitar la búsqueda, también desde el clic derecho del Explorador
   ("Buscar con EasySearcher").
 - Filtros por tipo (archivos, carpetas, imágenes, videos, música, documentos), por fecha de
-  modificación (hoy, esta semana, rango personalizado…) y por tamaño (las categorías del Explorador,
-  hasta "Gigantesco, > 4 GB"). Con un filtro de fecha o tamaño se puede buscar sin escribir texto.
+  modificación (hoy, esta semana, rango personalizado…) y por tamaño (mayor o menor que una cifra en
+  KB, MB o GB, o vacíos). Con un filtro de fecha o tamaño se puede buscar sin escribir texto.
 - Tamaño y fecha de todas las entradas leídos directamente de la `$MFT` (~800.000 en ~4,5 s, en
   segundo plano): ordenar o filtrar por ellos es instantáneo.
 - Vistas de detalles (nombre, carpeta, tamaño, fecha, con orden por columna) y de iconos con

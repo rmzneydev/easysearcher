@@ -15,7 +15,7 @@ sealed record HistoryEntry(
     DatePreset Date,
     DateTime? CustomFrom,
     DateTime? CustomTo,
-    SizePreset Size)
+    SizeCriterion Size)
 {
     public DateTime LastUsed { get; init; }
 
