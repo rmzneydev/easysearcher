@@ -12,7 +12,7 @@
         <DataTemplate x:Key="HistoryItemTemplate">
             <StackPanel Margin="2,3">
                 <TextBlock Text="{Binding Title}" FontWeight="SemiBold" />
-                <TextBlock Text="{Binding Description}" Foreground="Gray" FontSize="11" />
+                <TextBlock Text="{Binding Description}" Foreground="{DynamicResource TextFillColorSecondaryBrush}" FontSize="11" />
             </StackPanel>
         </DataTemplate>
 
@@ -28,7 +28,7 @@
         <DataTemplate x:Key="MediumIconsTemplate">
             <StackPanel Width="108" ToolTip="{Binding FullPath}">
                 <Grid Width="96" Height="96" HorizontalAlignment="Center">
-                    <TextBlock x:Name="Glyph" FontFamily="Segoe MDL2 Assets" Text="&#xE8A5;" FontSize="48" Foreground="Gray"
+                    <TextBlock x:Name="Glyph" FontFamily="Segoe MDL2 Assets" Text="&#xE8A5;" FontSize="48" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                                HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed" />
                     <Image Source="{Binding MediumThumbnail}" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" />
                 </Grid>
@@ -48,7 +48,7 @@
         <DataTemplate x:Key="LargeIconsTemplate">
             <StackPanel Width="204" ToolTip="{Binding FullPath}">
                 <Grid Width="192" Height="192" HorizontalAlignment="Center">
-                    <TextBlock x:Name="Glyph" FontFamily="Segoe MDL2 Assets" Text="&#xE8A5;" FontSize="96" Foreground="Gray"
+                    <TextBlock x:Name="Glyph" FontFamily="Segoe MDL2 Assets" Text="&#xE8A5;" FontSize="96" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                                HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed" />
                     <Image Source="{Binding LargeThumbnail}" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" />
                 </Grid>
@@ -73,19 +73,32 @@
                 <ColumnDefinition />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <TextBlock Text="Buscar en:" VerticalAlignment="Center" Margin="0,0,8,0" />
             <Grid Grid.Column="1">
                 <TextBox x:Name="RootBox" Padding="4,3" VerticalContentAlignment="Center"
                          TextChanged="RootBox_TextChanged" KeyDown="RootBox_KeyDown"
                          LostKeyboardFocus="RootBox_LostKeyboardFocus" />
-                <TextBlock x:Name="RootPlaceholder" Text="Todas las unidades" Foreground="Gray"
+                <TextBlock x:Name="RootPlaceholder" Text="Todas las unidades" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                            Margin="7,0" VerticalAlignment="Center" IsHitTestVisible="False" />
             </Grid>
             <Button Grid.Column="2" Content="..." Width="32" Margin="6,0,0,0"
                     ToolTip="Elegir carpeta raíz" Click="BrowseRoot_Click" />
             <Button Grid.Column="3" Content="&#xE711;" FontFamily="Segoe MDL2 Assets" Width="32" Margin="6,0,0,0"
                     ToolTip="Buscar en todas las unidades" Click="ClearRoot_Click" />
+            <!-- Tema: Sistema / Claro / Oscuro (Tag = valor del enum AppTheme) -->
+            <Button x:Name="ThemeButton" Grid.Column="4" Content="&#xE790;" FontFamily="Segoe MDL2 Assets" Width="32"
+                    Margin="6,0,0,0" ToolTip="Tema" Click="ThemeButton_Click">
+                <Button.ContextMenu>
+                    <!-- Sin esto heredaria la fuente de iconos del boton -->
+                    <ContextMenu x:Name="ThemeMenu" FontFamily="{x:Static SystemFonts.MessageFontFamily}">
+                        <MenuItem Header="Usar el del _sistema" Tag="System" IsCheckable="True" Click="ThemeMenu_Click" />
+                        <MenuItem Header="_Claro" Tag="Light" IsCheckable="True" Click="ThemeMenu_Click" />
+                        <MenuItem Header="_Oscuro" Tag="Dark" IsCheckable="True" Click="ThemeMenu_Click" />
+                    </ContextMenu>
+                </Button.ContextMenu>
+            </Button>
         </Grid>
 
         <Grid DockPanel.Dock="Top" Margin="8">
@@ -125,7 +138,7 @@
                         Visibility="Collapsed" Click="ClearFilters_Click" />
             </StackPanel>
             <!-- Mismo orden que el enum ViewMode -->
-            <ComboBox x:Name="ViewBox" Grid.Column="4" Width="135" Margin="8,0,0,0" SelectedIndex="0"
+            <ComboBox x:Name="ViewBox" Grid.Column="4" Width="160" Margin="8,0,0,0" SelectedIndex="0"
                       VerticalContentAlignment="Center" ToolTip="Vista" SelectionChanged="ViewBox_SelectionChanged">
                 <ComboBoxItem Content="Detalles" />
                 <ComboBoxItem Content="Iconos medianos" />
@@ -152,7 +165,7 @@
             <TextBox x:Name="QueryBox" FontSize="15" Padding="6,4,34,4" VerticalContentAlignment="Center"
                      TextChanged="QueryBox_TextChanged" PreviewKeyDown="QueryBox_PreviewKeyDown"
                      ToolTip="linkin mp3 : contiene ambas palabras&#10;&quot;linkin park&quot; : texto exacto&#10;*.mp3, foto_??.jpg : comodines contra el nombre completo&#10;!temp : excluye" />
-            <TextBlock x:Name="QueryPlaceholder" Text="Escribe para buscar...   (varias palabras, *.mp3, !excluir)" Foreground="Gray" FontSize="15"
+            <TextBlock x:Name="QueryPlaceholder" Text="Escribe para buscar...   (varias palabras, *.mp3, !excluir)" Foreground="{DynamicResource TextFillColorSecondaryBrush}" FontSize="15"
                        Margin="9,0" VerticalAlignment="Center" IsHitTestVisible="False" />
             <!-- Boton de busquedas recientes, dentro del campo a la derecha -->
             <Button x:Name="HistoryButton" Content="&#xE81C;" FontFamily="Segoe MDL2 Assets" Width="30" Margin="0,2,2,2"
@@ -163,14 +176,15 @@
             <Popup x:Name="HistoryPopup" PlacementTarget="{Binding ElementName=QueryBox}" Placement="Bottom"
                    StaysOpen="False" AllowsTransparency="True"
                    Width="{Binding ActualWidth, ElementName=QueryBox}">
-                <Border Background="{DynamicResource {x:Static SystemColors.WindowBrushKey}}" BorderBrush="Gray" BorderThickness="1">
+                <Border Background="{DynamicResource ApplicationBackgroundBrush}"
+                        BorderBrush="{DynamicResource SurfaceStrokeColorFlyoutBrush}" BorderThickness="1" CornerRadius="4">
                     <DockPanel>
                         <DockPanel DockPanel.Dock="Bottom" Margin="6,4">
                             <Button Content="Borrar historial" DockPanel.Dock="Right" Padding="8,2" Click="ClearHistory_Click" />
                             <CheckBox x:Name="HistoryEnabledBox" Content="Guardar historial" VerticalAlignment="Center"
                                       Click="HistoryEnabledBox_Click" />
                         </DockPanel>
-                        <TextBlock x:Name="HistoryEmpty" DockPanel.Dock="Top" Margin="8,6" Foreground="Gray"
+                        <TextBlock x:Name="HistoryEmpty" DockPanel.Dock="Top" Margin="8,6" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                                    Text="Las búsquedas aparecen aquí cuando abres, copias o arrastras un resultado." TextWrapping="Wrap" />
                         <ListBox x:Name="HistoryList" MaxHeight="320" BorderThickness="0"
                                  ItemTemplate="{StaticResource HistoryItemTemplate}"
@@ -219,14 +233,7 @@
                       PreviewMouseLeftButtonDown="ResultsList_PreviewMouseLeftButtonDown"
                       PreviewMouseMove="ResultsList_PreviewMouseMove"
                       PreviewMouseLeftButtonUp="ResultsList_PreviewMouseLeftButtonUp">
-                <ListView.ItemContainerStyle>
-                    <Style TargetType="ListViewItem">
-                        <!-- Stretch para poder alinear a la derecha la columna de tamano -->
-                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                        <Setter Property="ToolTip" Value="{Binding FullPath}" />
-                        <EventSetter Event="MouseDoubleClick" Handler="ResultItem_DoubleClick" />
-                    </Style>
-                </ListView.ItemContainerStyle>
+                <!-- ItemContainerStyle se arma en codigo (ApplyItemStyle): hereda el del tema, distinto segun la vista -->
                 <ListView.ContextMenu>
                     <ContextMenu>
                         <MenuItem Header="_Abrir" InputGestureText="Enter" Click="OpenMenu_Click" />
@@ -246,7 +253,7 @@
                                         <!-- Icono real del tipo de archivo; mientras carga, un glifo generico -->
                                         <Grid Width="16" Height="16" Margin="0,0,6,0" VerticalAlignment="Center">
                                             <TextBlock x:Name="Glyph" FontFamily="Segoe MDL2 Assets" Text="&#xE8A5;"
-                                                       Foreground="Gray" Visibility="Collapsed" />
+                                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" Visibility="Collapsed" />
                                             <Image Source="{Binding SmallIcon}" />
                                         </Grid>
                                         <TextBlock Text="{Binding Name}" />
@@ -289,7 +296,7 @@
             <StackPanel x:Name="MessagePanel" Width="560" VerticalAlignment="Center" HorizontalAlignment="Center"
                         Visibility="Collapsed">
                 <TextBlock x:Name="MessageTitle" FontSize="18" TextAlignment="Center" TextWrapping="Wrap" />
-                <TextBlock x:Name="MessageDetail" Foreground="Gray" TextAlignment="Center" TextWrapping="Wrap"
+                <TextBlock x:Name="MessageDetail" Foreground="{DynamicResource TextFillColorSecondaryBrush}" TextAlignment="Center" TextWrapping="Wrap"
                            LineHeight="20" Margin="0,8,0,0" />
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,4,0,0">
                     <Button x:Name="MessageClearFilters" Content="Quitar filtros" Margin="4,8,4,0" Padding="10,4"

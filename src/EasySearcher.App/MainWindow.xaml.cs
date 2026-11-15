@@ -3,6 +3,8 @@ using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -42,6 +44,8 @@ public partial class MainWindow : Window
 
     internal MainWindow(StartupArgs args)
     {
+        // Antes de crear los controles, para que no se dibujen primero con el tema equivocado
+        ApplyTheme(_settings.Theme);
         InitializeComponent();
         RootBox.Text = args.Root ?? _settings.RootPath ?? "";
         QueryBox.Text = args.Query ?? "";
@@ -724,6 +728,56 @@ public partial class MainWindow : Window
                 ResultsList.View = _detailsView;
                 break;
         }
+        ApplyItemStyle();
+    }
+
+    /// <summary>
+    /// Estilo de las filas basado en el del tema (con GridView es otro que en las vistas de iconos). Sin
+    /// BasedOn se usaria la plantilla clasica, con colores de seleccion que no combinan con el tema oscuro.
+    /// Se vuelve a armar al cambiar de vista o de tema.
+    /// </summary>
+    void ApplyItemStyle()
+    {
+        object baseKey = ResultsList.View is GridView ? GridView.GridViewItemContainerStyleKey : typeof(ListViewItem);
+        var style = new Style(typeof(ListViewItem), TryFindResource(baseKey) as Style);
+        // Stretch para poder alinear a la derecha la columna de tamano
+        style.Setters.Add(new Setter(HorizontalContentAlignmentProperty, HorizontalAlignment.Stretch));
+        style.Setters.Add(new Setter(ToolTipProperty, new Binding(nameof(ResultRow.FullPath))));
+        style.Setters.Add(new EventSetter(MouseDoubleClickEvent, new MouseButtonEventHandler(ResultItem_DoubleClick)));
+        if (ResultsList.View is GridView)
+        {
+            // Las filas del tema Fluent miden ~40 px: muy pocas en pantalla para una lista de resultados
+            style.Setters.Add(new Setter(MinHeightProperty, 24.0));
+            style.Setters.Add(new Setter(PaddingProperty, new Thickness(0, 2, 0, 2)));
+        }
+        ResultsList.ItemContainerStyle = style;
+    }
+
+    // ThemeMode (tema Fluent de WPF) aun esta marcado como experimental
+#pragma warning disable WPF0001
+    static void ApplyTheme(AppTheme theme) => Application.Current.ThemeMode = theme switch
+    {
+        AppTheme.Light => ThemeMode.Light,
+        AppTheme.Dark => ThemeMode.Dark,
+        _ => ThemeMode.System,
+    };
+#pragma warning restore WPF0001
+
+    void ThemeButton_Click(object sender, RoutedEventArgs e)
+    {
+        foreach (MenuItem item in ThemeMenu.Items)
+            item.IsChecked = (string)item.Tag == _settings.Theme.ToString();
+        ThemeMenu.PlacementTarget = ThemeButton;
+        ThemeMenu.Placement = PlacementMode.Bottom;
+        ThemeMenu.IsOpen = true;
+    }
+
+    void ThemeMenu_Click(object sender, RoutedEventArgs e)
+    {
+        _settings.Theme = Enum.Parse<AppTheme>((string)((MenuItem)sender).Tag);
+        _settings.Save();
+        ApplyTheme(_settings.Theme);
+        ApplyItemStyle();
     }
 
     async void SystemBox_Click(object sender, RoutedEventArgs e)

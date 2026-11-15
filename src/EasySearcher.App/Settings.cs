@@ -12,6 +12,15 @@ enum ViewMode
     LargeIcons,
 }
 
+/// <summary>Tema de colores de la ventana.</summary>
+enum AppTheme
+{
+    /// <summary>El modo de aplicaciones de Windows (claro u oscuro); cambia en vivo si el usuario lo cambia.</summary>
+    System,
+    Light,
+    Dark,
+}
+
 /// <summary>Preferencias del usuario en %APPDATA%\EasySearcher\settings.json.</summary>
 sealed class Settings
 {
@@ -28,6 +37,8 @@ sealed class Settings
     public bool SortDescending { get; set; }
 
     public ViewMode ViewMode { get; set; } = ViewMode.Details;
+
+    public AppTheme Theme { get; set; } = AppTheme.System;
 
     /// <summary>Guardar las busquedas que se usan (ver SearchHistory).</summary>
     public bool HistoryEnabled { get; set; } = true;
