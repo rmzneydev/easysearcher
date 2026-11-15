@@ -210,9 +210,11 @@ static class ShellImages
             }
             return ToBitmapSource(bitmap);
         }
-        catch (COMException)
+        catch (Exception)
         {
-            // Archivo que ya no existe, sin permisos o sin generador de miniaturas
+            // Archivo que ya no existe (FileNotFoundException), sin permisos (UnauthorizedAccessException),
+            // sin generador de miniaturas (COMException) o un generador de terceros que falla. Este hilo no
+            // debe dejar escapar nada: una excepcion sin atrapar aqui cierra la aplicacion.
             return null;
         }
         finally

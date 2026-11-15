@@ -38,6 +38,10 @@ internal static class MftReader
     const int EnumBufferSize = 1 << 20;
     const int JournalBufferSize = 1 << 16;
 
+    // Valores por defecto de Windows para un journal nuevo (los mismos de "fsutil usn createjournal")
+    const ulong DefaultJournalSize = 32 << 20;
+    const ulong DefaultJournalDelta = 8 << 20;
+
     public delegate void RecordHandler(ulong frn, ulong parentFrn, uint attributes, uint reason, ReadOnlySpan<char> name);
 
     public static SafeFileHandle OpenVolume(char drive)
@@ -94,6 +98,29 @@ internal static class MftReader
         return new JournalInfo(
             BinaryPrimitives.ReadUInt64LittleEndian(output),
             BinaryPrimitives.ReadInt64LittleEndian(output.AsSpan(16)));
+    }
+
+    /// <summary>
+    /// Activa el USN Journal de un volumen que no lo tiene (FSCTL_CREATE_USN_JOURNAL), con el tamano que
+    /// usa Windows por defecto. Sin journal el indice de ese volumen no se entera de ningun cambio. Es lo
+    /// mismo que hacen Windows Search y otros indexadores; se puede quitar con "fsutil usn deletejournal".
+    /// Devuelve false si no se pudo (volumen de solo lectura, sin permisos...).
+    /// </summary>
+    public static bool TryCreateJournal(char drive)
+    {
+        // Este control necesita el volumen abierto con escritura; el handle de lectura no basta
+        using var volume = NativeMethods.CreateFile(
+            $@"\\.\{drive}:", NativeMethods.GENERIC_READ | NativeMethods.GENERIC_WRITE,
+            NativeMethods.FILE_SHARE_READ | NativeMethods.FILE_SHARE_WRITE,
+            IntPtr.Zero, NativeMethods.OPEN_EXISTING, 0, IntPtr.Zero);
+        if (volume.IsInvalid) return false;
+
+        // CREATE_USN_JOURNAL_DATA: MaximumSize, AllocationDelta
+        var input = new byte[16];
+        BinaryPrimitives.WriteUInt64LittleEndian(input, DefaultJournalSize);
+        BinaryPrimitives.WriteUInt64LittleEndian(input.AsSpan(8), DefaultJournalDelta);
+        return NativeMethods.DeviceIoControl(volume, NativeMethods.FSCTL_CREATE_USN_JOURNAL,
+            input, input.Length, [], 0, out _, IntPtr.Zero);
     }
 
     /// <summary>

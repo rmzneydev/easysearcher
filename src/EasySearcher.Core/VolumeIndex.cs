@@ -115,6 +115,10 @@ public sealed class VolumeIndex : IDisposable
 
         // Se toma la posicion del journal antes de enumerar para no perder cambios ocurridos mientras tanto
         var journal = MftReader.QueryJournal(volume, Drive);
+        // Sin journal el indice quedaria congelado: renombrados y borrados seguirian apareciendo con su
+        // nombre viejo. Se activa (si se puede) y se vuelve a consultar.
+        if (journal is null && MftReader.TryCreateJournal(Drive))
+            journal = MftReader.QueryJournal(volume, Drive);
         Populate(onRecord => MftReader.Enumerate(volume, Drive, onRecord), journal);
         BuildTime = sw.Elapsed;
     }

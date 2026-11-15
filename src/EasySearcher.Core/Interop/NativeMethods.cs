@@ -6,6 +6,7 @@ namespace EasySearcher.Core.Interop;
 internal static class NativeMethods
 {
     public const uint GENERIC_READ = 0x80000000;
+    public const uint GENERIC_WRITE = 0x40000000;
     public const uint FILE_SHARE_READ = 0x1;
     public const uint FILE_SHARE_WRITE = 0x2;
     public const uint OPEN_EXISTING = 3;
@@ -13,6 +14,7 @@ internal static class NativeMethods
     public const uint FSCTL_ENUM_USN_DATA = 0x000900B3;
     public const uint FSCTL_READ_USN_JOURNAL = 0x000900BB;
     public const uint FSCTL_QUERY_USN_JOURNAL = 0x000900F4;
+    public const uint FSCTL_CREATE_USN_JOURNAL = 0x000900E7;
     public const uint FSCTL_GET_NTFS_VOLUME_DATA = 0x00090064;
 
     public const int ERROR_ACCESS_DENIED = 5;
